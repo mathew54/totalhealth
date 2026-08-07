@@ -7,3 +7,9 @@ build/
 .DS_Store
 coverage/
 supabase/.temp/
+
+# Local Netlify folder
+.netlify
+
+# Credenciales de despliegue (NO subir)
+DEPLOY_CREDENCIALES.md

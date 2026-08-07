@@ -416,13 +416,13 @@ router.post('/integracion/loinc/adoptar', async (req, res, next) => {
 
 /**
  * GET /api/admin/config
- * Marca de la app (razón social, RIF, logo, color del header).
+ * Marca de la app (razón social, RIF, dirección, teléfono, logo, color del header).
  */
 router.get('/config', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('app_config')
-      .select('razon_social, rif, logo_url, header_color, updated_at')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, updated_at')
       .eq('id', true)
       .maybeSingle();
     if (error) return next(error);
@@ -430,6 +430,8 @@ router.get('/config', async (_req, res, next) => {
       data ?? {
         razon_social: 'TotalHealth',
         rif: '',
+        direccion: '',
+        telefono: '',
         logo_url: '',
         header_color: '#8b5cf6',
         updated_at: null,
@@ -451,7 +453,7 @@ router.put('/config', validate(configSchema), async (req, res, next) => {
       .from('app_config')
       .update({ ...body, updated_at: new Date().toISOString() })
       .eq('id', true)
-      .select('razon_social, rif, logo_url, header_color, updated_at')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, updated_at')
       .single();
     if (error) return next(badRequest(error.message));
     res.json(data);

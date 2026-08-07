@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import { headerTextColor, useConfigStore } from '../../lib/configStore'
+import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
 import type { Profile } from '../../lib/rbac'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd, usdABs, formatearBs } from '../../lib/moneda'
@@ -866,9 +867,12 @@ function TasasTab() {
 const PRESETS = ['#8b5cf6', '#059669', '#0ea5e9', '#ef4444', '#f59e0b', '#0f172a']
 
 function ConfigTab() {
-  const { razon_social, rif, logo_url, header_color, apply } = useConfigStore()
+  const { razon_social, rif, direccion, telefono, logo_url, header_color, apply } = useConfigStore()
   const [mensaje, setMensaje] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [logoData, setLogoData] = useState<string | null>(null)
+  const [logoAviso, setLogoAviso] = useState<string | null>(null)
+  const logoInputRef = useRef<HTMLInputElement>(null)
 
   const guardar = useMutation({
     mutationFn: (p: unknown) => api.put('/admin/config', p),
@@ -888,9 +892,28 @@ function ConfigTab() {
     guardar.mutate({
       razon_social: fd.get('razon_social'),
       rif: fd.get('rif'),
-      logo_url: fd.get('logo_url'),
+      direccion: fd.get('direccion') || null,
+      telefono: fd.get('telefono') || null,
+      logo_url: logoData ?? fd.get('logo_url'),
       header_color,
     })
+  }
+
+  async function handleLogoFile(file: File) {
+    try {
+      const logo = await procesarLogo(file)
+      setLogoData(logo.dataUrl)
+      if (logo.ajustada) {
+        setLogoAviso(
+          `La imagen (${logo.medidasOriginales}) no cumple la medida estándar y se ajustó a ${logo.medidasFinales}. ` +
+            `La medida estándar del logo es ${LOGO_ESTANDAR.ancho}×${LOGO_ESTANDAR.alto} px; si lo deseas, sube una imagen con esas medidas para mayor nitidez.`,
+        )
+      } else {
+        setLogoAviso(`La imagen cumple la medida estándar (${logo.medidasFinales}).`)
+      }
+    } catch (err) {
+      setError((err as Error).message)
+    }
   }
 
   return (
@@ -906,8 +929,57 @@ function ConfigTab() {
           <Field label="R.I.F.">
             <input name="rif" defaultValue={rif} className={inputCls} placeholder="J-00000000-0" />
           </Field>
-          <Field label="Logo (URL o ruta)">
-            <input name="logo_url" defaultValue={logo_url} className={inputCls} placeholder="/favicon.svg" />
+          <Field label="Dirección">
+            <input name="direccion" defaultValue={direccion} className={inputCls} placeholder="Av. Principal, Caracas" />
+          </Field>
+          <Field label="Teléfono">
+            <input name="telefono" defaultValue={telefono} className={inputCls} placeholder="+58 412-1234567" />
+          </Field>
+          <Field label="Logo">
+            <div className="flex items-start gap-3">
+              {(logoData ?? logo_url) && (
+                <img src={logoData ?? logo_url} alt="Logo" className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 object-contain p-1" />
+              )}
+              <div className="flex-1 space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => logoInputRef.current?.click()}
+                    className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                  >
+                    Subir imagen desde el equipo
+                  </button>
+                  {(logoData || logo_url) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLogoData(null)
+                        setLogoAviso(null)
+                        if (logoInputRef.current) logoInputRef.current.value = ''
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                    >
+                      Quitar
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) void handleLogoFile(file)
+                  }}
+                />
+                <p className="text-xs text-slate-500">
+                  Medida estándar: {LOGO_ESTANDAR.ancho}×{LOGO_ESTANDAR.alto} px. Si la imagen no la cumple, la app la ajusta automáticamente.
+                </p>
+                {logoAviso && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">{logoAviso}</p>}
+                <input name="logo_url" defaultValue={logo_url} className={inputCls} placeholder="/favicon.svg (o URL)" hidden={Boolean(logoData)} />
+              </div>
+            </div>
           </Field>
         </div>
       </div>
@@ -942,6 +1014,8 @@ function ConfigTab() {
         <div className="mt-4 rounded-lg p-3" style={{ backgroundColor: header_color, color: headerTextColor(header_color) }}>
           <p className="font-semibold">{razon_social || 'Tu razón social'}</p>
           {rif && <p className="text-xs opacity-80">R.I.F. {rif}</p>}
+          {direccion && <p className="text-xs opacity-80">Dirección: {direccion}</p>}
+          {telefono && <p className="text-xs opacity-80">Tel: {telefono}</p>}
         </div>
       </div>
 

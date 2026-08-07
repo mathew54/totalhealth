@@ -8,6 +8,8 @@ export interface PacientePdf {
 export interface Branding {
   razon_social?: string
   rif?: string
+  direccion?: string | null
+  telefono?: string | null
   logo_url?: string
 }
 
@@ -76,6 +78,8 @@ export async function descargarResultadoPdf(r: ResultadoPdf): Promise<void> {
   // ---- Cabecera de marca ----
   const nombre = r.branding?.razon_social || 'TotalHealth'
   const rif = r.branding?.rif || ''
+  const direccion = r.branding?.direccion || ''
+  const telefono = r.branding?.telefono || ''
   let logo: string | null = null
   if (r.branding?.logo_url) logo = await loadLogoDataUrl(r.branding.logo_url)
 
@@ -98,6 +102,12 @@ export async function descargarResultadoPdf(r: ResultadoPdf): Promise<void> {
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(120)
     doc.text(`R.I.F. ${rif}`, textX, y + 11)
+  }
+  if (direccion || telefono) {
+    doc.setFontSize(8)
+    doc.setTextColor(120)
+    const contacto = [direccion && `Dir: ${direccion}`, telefono && `Tel: ${telefono}`].filter(Boolean).join(' · ')
+    doc.text(doc.splitTextToSize(contacto, contentWidth - textX + margin) as string, textX, y + 15)
   }
   y += 16
 

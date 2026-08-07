@@ -11,7 +11,7 @@ export function createApp() {
 
   app.use(helmet());
   app.use(cors({ origin: env.corsOrigin.split(','), credentials: true }));
-  app.use(express.json({ limit: '2mb' }));
+    app.use(express.json({ limit: '8mb' }));
 
   if (env.nodeEnv !== 'test') app.use(morgan('dev'));
 

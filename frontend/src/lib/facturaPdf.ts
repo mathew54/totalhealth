@@ -5,7 +5,7 @@ export interface FacturaPdfData {
     serie: string
     control: string
     tipo: string
-    emisor: { razon_social: string; rif: string }
+    emisor: { razon_social: string; rif: string; direccion?: string | null; telefono?: string | null }
     receptor: { nombre: string; cedula: string | null }
     fecha: string
     moneda: string
@@ -46,6 +46,12 @@ export function descargarFacturaPdf(data: FacturaPdfData): void {
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(110)
   doc.text(`R.I.F. ${f.emisor.rif}`, margin, y + 5)
+  const contactoEmisor = [f.emisor.direccion && `Dir: ${f.emisor.direccion}`, f.emisor.telefono && `Tel: ${f.emisor.telefono}`]
+    .filter(Boolean)
+    .join(' · ')
+  if (contactoEmisor) {
+    doc.text(doc.splitTextToSize(contactoEmisor, width) as string, margin, y + 10)
+  }
 
   // Tributo / control
   doc.setFont('helvetica', 'bold')

@@ -4,6 +4,8 @@ import { api } from './api'
 export interface AppConfig {
   razon_social: string
   rif: string
+  direccion: string
+  telefono: string
   logo_url: string
   header_color: string
 }
@@ -53,6 +55,8 @@ interface ConfigState extends AppConfig {
 export const useConfigStore = create<ConfigState>((set, get) => ({
   razon_social: 'TotalHealth',
   rif: '',
+  direccion: '',
+  telefono: '',
   logo_url: '',
   header_color: '#8b5cf6',
   loaded: false,

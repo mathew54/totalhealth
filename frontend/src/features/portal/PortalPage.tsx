@@ -273,8 +273,8 @@ function PortalPanel({ token, paciente }: { token: string; paciente: PortalSessi
     cargar(tab)
   }, [tab, cargar])
 
-  const { razon_social, rif, logo_url } = useConfigStore()
-  const branding = { razon_social, rif, logo_url }
+  const { razon_social, rif, direccion, telefono, logo_url } = useConfigStore()
+  const branding = { razon_social, rif, direccion, telefono, logo_url }
   const [compartir, setCompartir] = useState<{ nombre: string; url: string } | null>(null)
   const [shareLoading, setShareLoading] = useState(false)
 

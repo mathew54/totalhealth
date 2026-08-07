@@ -60,7 +60,9 @@ export const examenSchema = z.object({
 export const configSchema = z.object({
   razon_social: z.string().min(3, 'Razon social requerida').max(200).optional(),
   rif: z.string().max(30).optional(),
-  logo_url: z.string().max(2000).optional(),
+  direccion: z.string().max(300).optional().nullable(),
+  telefono: z.string().max(40).optional().nullable(),
+  logo_url: z.string().max(3_000_000).optional().nullable(),
   header_color: z
     .string()
     .regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/, 'Color hexadecimal invalido')

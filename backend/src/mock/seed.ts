@@ -38,6 +38,8 @@ export const SEED: Record<string, Row[]> = {
       id: true,
       razon_social: 'Clínica Demo TotalHealth',
       rif: 'J-00000000-0',
+      direccion: 'Av. Principal, Caracas, Venezuela',
+      telefono: '+58 412-1234567',
       logo_url: '/favicon.svg',
       header_color: '#8b5cf6',
       preanalitica: { habilitado: true, obligatorio: true },

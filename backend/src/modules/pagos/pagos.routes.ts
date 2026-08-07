@@ -284,7 +284,7 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
     const tipo = (pago.tipo as string) === 'consulta' ? 'factura' : 'recibo';
 
     const [{ data: emisor }, { data: receptor }, { data: lineas }] = await Promise.all([
-      getSupabase().from('app_config').select('razon_social, rif, logo_url').eq('id', true).maybeSingle(),
+      getSupabase().from('app_config').select('razon_social, rif, direccion, telefono, logo_url').eq('id', true).maybeSingle(),
       getSupabase().from('pacientes').select('nombre_completo, cedula').eq('id', pago.paciente_id).single(),
       getSupabase()
         .from('solicitudes_detalle')
@@ -330,6 +330,8 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
       emisor: {
         razon_social: emisor?.razon_social ?? 'TotalHealth',
         rif: emisor?.rif ?? '',
+        direccion: emisor?.direccion ?? null,
+        telefono: emisor?.telefono ?? null,
       },
       receptor: {
         nombre: receptor?.nombre_completo ?? '',

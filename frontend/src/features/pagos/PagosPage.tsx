@@ -40,7 +40,7 @@ interface FacturaResp {
     serie: string
     control: string
     tipo: string
-    emisor: { razon_social: string; rif: string }
+    emisor: { razon_social: string; rif: string; direccion?: string | null; telefono?: string | null }
     receptor: { nombre: string; cedula: string | null }
     fecha: string
     moneda: string

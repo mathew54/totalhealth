@@ -19,7 +19,8 @@ import { encryptCampo, decryptCampo } from '../../services/cifrado.js';
 const router = Router();
 router.use(authRequired);
 
-const ADMIN_ONLY = requireRole('admin', 'secretaria', 'super_root');
+const ESCRIBIR_PACIENTE = requireRole('medico', 'secretaria', 'admin', 'super_root');
+const ELIMINAR_PACIENTE = requireRole('admin', 'super_root');
 
 const PACIENTE_COLS = 'id, cedula, tipo_documento, nombre_completo, fecha_nacimiento, telefono, email, direccion, sexo, es_menor, representante_id, parentesco_representante, fecha_consentimiento, deleted_at, created_at';
 
@@ -91,14 +92,14 @@ router.get('/', validate(searchPacientesQuery, 'query'), async (req, res, next) 
 
 /**
  * POST /api/pacientes
- * Registro inicial de paciente (secretaria/admin).
+ * Registro inicial de paciente (cualquier staff médico: medico/secretaria/admin).
  * Soporta:
  *  - Todos los tipos de documento de identidad VE (V/E/J/P/C).
  *  - Pacientes menores de edad sin cédula propia (es_menor + representante_id).
  *  - Alta simultánea de un hijo (`hijo`): crea al responsable y, en el mismo
  *    request, al menor vinculado como dependiente con parentesco "hijo".
  */
-router.post('/', ADMIN_ONLY, validate(createPacienteSchema), async (req, res, next) => {
+router.post('/', ESCRIBIR_PACIENTE, validate(createPacienteSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof createPacienteSchema>;
     const user = req.user!;
@@ -217,9 +218,9 @@ router.get('/:id', validate(idParamSchema, 'params'), async (req, res, next) => 
 
 /**
  * PUT /api/pacientes/:id
- * Actualiza datos del paciente (secretaria/admin).
+ * Actualiza datos del paciente (cualquier staff médico: medico/secretaria/admin).
  */
-router.put('/:id', ADMIN_ONLY, validate(updatePacienteSchema), validate(idParamSchema, 'params'), async (req, res, next) => {
+router.put('/:id', ESCRIBIR_PACIENTE, validate(updatePacienteSchema), validate(idParamSchema, 'params'), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const body = req.body as z.infer<typeof updatePacienteSchema>;
@@ -272,11 +273,11 @@ router.put('/:id', ADMIN_ONLY, validate(updatePacienteSchema), validate(idParamS
 
 /**
  * DELETE /api/pacientes/:id
- * Borrado lógico (soft delete): marca `deleted_at` y lo excluye de búsquedas,
- * conservando el histórico clínico para auditoría. No se puede eliminar a un
- * paciente que sea representante de menores o cabeza de dependientes.
+ * Borrado lógico (soft delete) restringido a admin/super_root: marca `deleted_at`
+ * y lo excluye de búsquedas, conservando el histórico clínico para auditoría.
+ * No se puede eliminar a un paciente que sea representante de menores o cabeza de dependientes.
  */
-router.delete('/:id', ADMIN_ONLY, validate(idParamSchema, 'params'), async (req, res, next) => {
+router.delete('/:id', ELIMINAR_PACIENTE, validate(idParamSchema, 'params'), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const user = req.user!;

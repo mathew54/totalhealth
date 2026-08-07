@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
+import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
 
 type TipoDocumento = 'V' | 'E' | 'J' | 'P' | 'C'
@@ -20,6 +21,7 @@ interface Paciente {
   nombre_completo: string
   telefono: string | null
   email: string | null
+  direccion: string | null
   sexo: 'M' | 'F' | null
   fecha_nacimiento: string | null
   es_menor: boolean
@@ -31,6 +33,8 @@ interface Paciente {
 
 export default function PacientesPage() {
   const queryClient = useQueryClient()
+  const profile = useSessionStore((s) => s.profile)
+  const esAdmin = profile?.role === 'admin' || profile?.role === 'super_root'
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
@@ -96,6 +100,7 @@ export default function PacientesPage() {
       tipo_documento: esMenor ? undefined : tipoDoc,
       telefono: fd.get('telefono'),
       email: fd.get('email') || undefined,
+      direccion: fd.get('direccion') || undefined,
       sexo: fd.get('sexo') || undefined,
       fecha_nacimiento: fd.get('fecha_nacimiento') ? new Date(String(fd.get('fecha_nacimiento'))).toISOString() : undefined,
       es_menor: esMenor,
@@ -196,6 +201,7 @@ export default function PacientesPage() {
           <Field label="Nombre completo *"><input name="nombre_completo" required minLength={3} className={inputCls} /></Field>
           <Field label="Teléfono"><input name="telefono" className={inputCls} /></Field>
           <Field label="Email"><input name="email" type="email" className={inputCls} /></Field>
+          <Field label="Dirección"><input name="direccion" className={inputCls} /></Field>
           <Field label="Sexo">
             <select name="sexo" className={inputCls} defaultValue="">
               <option value="">—</option>
@@ -265,6 +271,7 @@ export default function PacientesPage() {
           onClose={() => setSelected(null)}
           onEditar={() => { setError(null); setEditando(selected) }}
           onEliminar={() => { setError(null); setConfirmarEliminar(selected) }}
+          esAdmin={esAdmin}
         />
       )}
 
@@ -289,7 +296,7 @@ export default function PacientesPage() {
   )
 }
 
-function FichaModal({ paciente, onClose, onEditar, onEliminar }: { paciente: Paciente; onClose: () => void; onEditar: () => void; onEliminar: () => void }) {
+function FichaModal({ paciente, onClose, onEditar, onEliminar, esAdmin }: { paciente: Paciente; onClose: () => void; onEditar: () => void; onEliminar: () => void; esAdmin: boolean }) {
   const { data, isLoading } = useQuery({
     queryKey: ['paciente', paciente.id],
     queryFn: async () => (await api.get(`/pacientes/${paciente.id}`)).data,
@@ -317,6 +324,7 @@ function FichaModal({ paciente, onClose, onEditar, onEliminar }: { paciente: Pac
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
           {paciente.telefono && <Info label="Teléfono" value={paciente.telefono} />}
           {paciente.email && <Info label="Email" value={paciente.email} />}
+          {paciente.direccion && <Info label="Dirección" value={paciente.direccion} />}
           {paciente.fecha_nacimiento && <Info label="Nacimiento" value={new Date(paciente.fecha_nacimiento).toLocaleDateString()} />}
           {paciente.sexo && <Info label="Sexo" value={paciente.sexo === 'M' ? 'Masculino' : 'Femenino'} />}
           {paciente.tipo_documento && <Info label="Tipo de documento" value={paciente.tipo_documento} />}
@@ -352,12 +360,14 @@ function FichaModal({ paciente, onClose, onEditar, onEliminar }: { paciente: Pac
           >
             Editar
           </button>
-          <button
-            onClick={onEliminar}
-            className="flex-1 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
-          >
-            Eliminar
-          </button>
+          {esAdmin && (
+            <button
+              onClick={onEliminar}
+              className="flex-1 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+            >
+              Eliminar
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -424,6 +434,7 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
       nombre_completo: fd.get('nombre_completo'),
       telefono: fd.get('telefono'),
       email: fd.get('email') || '',
+      direccion: fd.get('direccion') || '',
       sexo: fd.get('sexo') || undefined,
       fecha_nacimiento: fd.get('fecha_nacimiento') ? new Date(String(fd.get('fecha_nacimiento'))).toISOString() : null,
     }
@@ -468,6 +479,7 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
           </Field>
           <Field label="Teléfono"><input name="telefono" defaultValue={paciente.telefono ?? ''} className={inputCls} /></Field>
           <Field label="Email"><input name="email" type="email" defaultValue={paciente.email ?? ''} className={inputCls} /></Field>
+          <Field label="Dirección"><input name="direccion" defaultValue={paciente.direccion ?? ''} className={inputCls} /></Field>
           <Field label="Sexo">
             <select name="sexo" defaultValue={paciente.sexo ?? ''} className={inputCls}>
               <option value="">—</option>

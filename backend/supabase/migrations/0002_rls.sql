@@ -71,17 +71,11 @@ end $$;
 -- ========================== PACIENTES ==========================
 do $$ begin
   create policy pacientes_secretaria_admin on pacientes for select to authenticated
-    using (is_role('secretaria') or is_role('admin') or is_super_root());
-  create policy pacientes_insert_secretaria on pacientes for insert to authenticated
-    with check (is_role('secretaria') or is_role('admin') or is_super_root());
-  create policy pacientes_update_secretaria on pacientes for update to authenticated
-    using (is_role('secretaria') or is_role('admin') or is_super_root());
-  -- El médico solo ve pacientes de sus consultas atendidas
-  create policy pacientes_find_own on pacientes for select to authenticated
-    using (
-      is_role('medico') and
-      id in (select paciente_id from public.consultas where medico_id = auth.uid())
-    );
+    using (is_role('secretaria') or is_role('admin') or is_super_root() or is_role('medico'));
+  create policy pacientes_insert_staff on pacientes for insert to authenticated
+    with check (is_role('secretaria') or is_role('admin') or is_super_root() or is_role('medico'));
+  create policy pacientes_update_staff on pacientes for update to authenticated
+    using (is_role('secretaria') or is_role('admin') or is_super_root() or is_role('medico'));
 end $$;
 
 -- ========================== CONSULTAS ==========================

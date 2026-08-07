@@ -39,7 +39,7 @@ export interface NavItem {
 // Matriz RBAC del frontend (espejo de las políticas RLS del backend).
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Inicio', path: '/', roles: ['super_root', 'admin', 'medico', 'laboratorio', 'secretaria'] },
-  { label: 'Pacientes', path: '/pacientes', roles: ['secretaria', 'admin'] },
+  { label: 'Pacientes', path: '/pacientes', roles: ['medico', 'secretaria', 'admin'] },
   { label: 'Agenda', path: '/consultas', roles: ['medico', 'secretaria', 'admin'] },
   { label: 'Laboratorio', path: '/laboratorio', roles: ['laboratorio', 'admin'] },
   { label: 'Domicilios', path: '/domicilios', roles: ['secretaria', 'laboratorio', 'admin'] },

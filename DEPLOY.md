@@ -2,6 +2,12 @@
 
 > Guardado el 2026-08-05 para realizar los despliegues (Netlify + backend).
 > Pasos y variables verificadas con `npm run build` en verde y 39 tests del backend pasando.
+>
+> Desplegado 2026-08-07:
+> - **Frontend (demo)**: https://totalhealth-demo.netlify.app
+> - **Backend**: https://totalhealth-backend.onrender.com (health: `/api/health`)
+> - **Repo**: https://github.com/mathew54/totalhealth
+> - Render creado por API: `runtime=node`, rootDir vacío, `npm ci --include=dev && npm run build -w backend`, start `npm run start -w backend`, plan free.
 
 ## Arquitectura
 

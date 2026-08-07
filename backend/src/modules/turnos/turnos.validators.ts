@@ -1,0 +1,20 @@
+import { z } from 'zod';
+
+export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+
+export const crearTurnoSchema = z.object({
+  paciente_id: z.string().uuid('Paciente inválido'),
+  consulta_id: z.string().uuid().optional().nullable(),
+  prioridad: z.enum(['normal', 'prioridad', 'urgente']).optional(),
+});
+
+export const estadoTurnoSchema = z.object({
+  estado: z.enum(['llamado', 'atendido', 'saltado', 'cancelado'], {
+    required_error: 'Estado inválido',
+  }),
+});
+
+export const turnosQuery = z.object({
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
+  estado: z.enum(['esperando', 'llamado', 'atendido', 'saltado', 'cancelado']).optional(),
+});

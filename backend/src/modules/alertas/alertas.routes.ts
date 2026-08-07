@@ -1,0 +1,180 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { getSupabase } from '../../config/supabase.js';
+import { authRequired } from '../../middleware/auth.js';
+import { requireRole } from '../../middleware/rbac.js';
+import { validate } from '../../middleware/validate.js';
+import { badRequest, notFound } from '../../utils/httpError.js';
+
+const router = Router();
+router.use(authRequired);
+
+const parametroSchema = z.object({
+  examen_id: z.string().uuid('Examen inválido'),
+  parametro: z.string().min(1, 'Parámetro requerido').max(100),
+  nombre: z.string().min(1, 'Nombre requerido').max(200),
+  unidad: z.string().max(30).optional().nullable(),
+  normal_min: z.coerce.number().nullable().optional(),
+  normal_max: z.coerce.number().nullable().optional(),
+  critico_min: z.coerce.number().nullable().optional(),
+  critico_max: z.coerce.number().nullable().optional(),
+  activo: z.boolean().optional(),
+});
+
+const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+
+const alertasQuery = z.object({
+  paciente_id: z.string().uuid('Paciente inválido').optional(),
+  solicitud_id: z.string().uuid('Solicitud inválida').optional(),
+  solo_no_leidas: z.enum(['true', 'false']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+/**
+ * GET /api/alertas/parametros?examen_id=...
+ * Umbrales de referencia (filtrables por examen).
+ */
+router.get('/parametros', async (req, res, next) => {
+  try {
+    const { examen_id } = req.query as { examen_id?: string };
+    const q = getSupabase()
+      .from('parametros_referencia')
+      .select('*')
+      .eq('activo', true)
+      .order('nombre', { ascending: true });
+    if (examen_id) q.eq('examen_id', examen_id);
+    const { data, error } = await q;
+    if (error) return next(badRequest(error.message));
+    res.json(data ?? []);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/alertas/parametros
+ * Crea un umbral de referencia (admin).
+ */
+router.post('/parametros', requireRole('admin', 'super_root'), validate(parametroSchema), async (req, res, next) => {
+  try {
+    const body = req.body as z.infer<typeof parametroSchema>;
+    const { data, error } = await getSupabase().from('parametros_referencia').insert(body).select('*').single();
+    if (error) return next(badRequest(error.message));
+    res.status(201).json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/alertas/parametros/:id
+ * Actualiza un umbral (admin).
+ */
+router.patch('/parametros/:id', requireRole('admin', 'super_root'), validate(idParamSchema, 'params'), async (req, res, next) => {
+  try {
+    const { id } = req.params as z.infer<typeof idParamSchema>;
+    const body = req.body as Partial<z.infer<typeof parametroSchema>>;
+    const { data, error } = await getSupabase()
+      .from('parametros_referencia')
+      .update({ ...body, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) return next(badRequest(error.message));
+    if (!data) return next(notFound('Parámetro no encontrado'));
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/alertas/parametros/:id
+ * Elimina un umbral (admin).
+ */
+router.delete('/parametros/:id', requireRole('admin', 'super_root'), validate(idParamSchema, 'params'), async (req, res, next) => {
+  try {
+    const { id } = req.params as z.infer<typeof idParamSchema>;
+    const { error } = await getSupabase().from('parametros_referencia').delete().eq('id', id);
+    if (error) return next(badRequest(error.message));
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/alertas
+ * Alertas clínicas, filtrables por paciente, solicitud o no leídas.
+ */
+router.get('/', validate(alertasQuery, 'query'), async (req, res, next) => {
+  try {
+    const { paciente_id, solicitud_id, solo_no_leidas, limit } = req.query as unknown as z.infer<typeof alertasQuery>;
+    const q = getSupabase()
+      .from('alertas_clinicas')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (paciente_id) q.eq('paciente_id', paciente_id);
+    if (solo_no_leidas === 'true') q.eq('leida', false);
+    q.range(0, limit - 1);
+
+    let rows = (await q).data ?? [];
+
+    // Filtro por solicitud: las alertas se relacionan vía solicitudes_detalle.
+    if (solicitud_id) {
+      const { data: detalles } = await getSupabase()
+        .from('solicitudes_detalle')
+        .select('id')
+        .eq('solicitud_id', solicitud_id);
+      const ids = new Set((detalles ?? []).map((d) => d.id));
+      rows = rows.filter((a) => ids.has(a.solicitud_detalle_id));
+    }
+
+    // Resuelve nombres de pacientes y exámenes manualmente (mock sin joins).
+    const pacientes = await resolverNombres('pacientes', rows.map((r) => r.paciente_id), 'id', 'nombre_completo');
+    const examenes = await resolverNombres('examenes_laboratorio', rows.map((r) => r.examen_id), 'id', 'nombre');
+    res.json(
+      rows.map((a) => ({
+        ...a,
+        paciente_nombre: pacientes.get(a.paciente_id) ?? null,
+        examen_nombre: examenes.get(a.examen_id) ?? null,
+      })),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+async function resolverNombres(tabla: string, ids: string[], idCol: string, nameCol: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!ids.length) return map;
+  const { data } = await getSupabase().from(tabla).select(`${idCol}, ${nameCol}` as never);
+  for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+    const key = r[idCol];
+    if (key != null) map.set(String(key), String(r[nameCol] ?? ''));
+  }
+  return map;
+}
+
+/**
+ * PATCH /api/alertas/:id/leida
+ * Marca una alerta como leída (laboratorio/admin).
+ */
+router.patch('/:id/leida', validate(idParamSchema, 'params'), async (req, res, next) => {
+  try {
+    const { id } = req.params as z.infer<typeof idParamSchema>;
+    const { data, error } = await getSupabase()
+      .from('alertas_clinicas')
+      .update({ leida: true })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) return next(badRequest(error.message));
+    if (!data) return next(notFound('Alerta no encontrada'));
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+export default router;

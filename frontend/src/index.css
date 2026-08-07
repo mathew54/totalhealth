@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-brand-50: #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-500: #10b981;
+  --color-brand-600: #059669;
+  --color-brand-700: #047857;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+    background-color: #0b1220;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Modo oscuro global: re-mapea las superficies y textos más comunes
+   de la app. Van sin capa para ganar a las utilidades de Tailwind.
+------------------------------------------------------------------- */
+.dark .bg-white {
+  background-color: var(--color-slate-800);
+}
+.dark .bg-slate-50 {
+  background-color: var(--color-slate-900);
+}
+.dark .bg-slate-100 {
+  background-color: var(--color-slate-950);
+}
+.dark .bg-slate-200 {
+  background-color: var(--color-slate-700);
+}
+.dark .bg-slate-800 {
+  background-color: var(--color-slate-700);
+}
+
+.dark .border-slate-200 {
+  border-color: var(--color-slate-700);
+}
+.dark .border-slate-300 {
+  border-color: var(--color-slate-600);
+}
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--color-slate-700);
+}
+
+.dark .text-slate-900,
+.dark .text-slate-800 {
+  color: var(--color-slate-100);
+}
+.dark .text-slate-700 {
+  color: var(--color-slate-200);
+}
+.dark .text-slate-600 {
+  color: var(--color-slate-300);
+}
+.dark .text-slate-500 {
+  color: var(--color-slate-400);
+}
+.dark .text-slate-400 {
+  color: var(--color-slate-500);
+}
+
+.dark .hover\:bg-slate-50:hover {
+  background-color: var(--color-slate-700);
+}
+.dark .hover\:bg-slate-100:hover {
+  background-color: var(--color-slate-700);
+}
+
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: var(--color-slate-900);
+  color: var(--color-slate-100);
+  border-color: var(--color-slate-600);
+}
+
+/* Los documentos impresos/descargables siempre salen en claro. */
+@media print {
+  .dark {
+    color: #0f172a;
+    background-color: #ffffff;
+  }
+  .dark .bg-white,
+  .dark .bg-slate-50,
+  .dark .bg-slate-100 {
+    background-color: #ffffff;
+  }
+  .dark .text-slate-900,
+  .dark .text-slate-800,
+  .dark .text-slate-700,
+  .dark .text-slate-600 {
+    color: #0f172a;
+  }
+  .dark .text-slate-500,
+  .dark .text-slate-400 {
+    color: #475569;
+  }
+  .dark .border-slate-200,
+  .dark .border-slate-300 {
+    border-color: #e2e8f0;
+  }
+  .dark input,
+  .dark select,
+  .dark textarea {
+    background-color: #ffffff;
+    color: #0f172a;
+    border-color: #cbd5e1;
+  }
+}

@@ -1,0 +1,14 @@
+# Netlify: despliegue del frontend (proyecto de prueba).
+# El backend Express NO corre en Netlify; debe alojarse aparte (p.ej. Render,
+# Railway, Fly.io) con USE_MOCK=true y CORS_ORIGIN apuntando a este dominio.
+# La URL del backend se inyecta en el build con la variable VITE_API_URL.
+
+[build]
+  command = "npm ci && npm run build -w frontend"
+  publish = "frontend/dist"
+
+# SPA: todas las rutas de la app (ej. /historial, /mocks) deben servir index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

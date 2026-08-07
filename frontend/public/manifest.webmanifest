@@ -1,0 +1,16 @@
+{
+  "name": "TotalHealth — Clínica digital",
+  "short_name": "TotalHealth",
+  "description": "Gestión de consultas, laboratorio y portal de resultados para pacientes.",
+  "start_url": "/portal",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#8b5cf6",
+  "lang": "es",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -12,7 +12,6 @@ interface Solicitud {
   estado: string
   fecha: string
 }
-
 interface Pago {
   id: string
   tipo: string
@@ -165,7 +164,16 @@ function CobroCard(props: {
   const [moneda, setMoneda] = useState('USD')
   const [descuento, setDescuento] = useState('')
   const [motivo, setMotivo] = useState('')
+  const [verDetalle, setVerDetalle] = useState(false)
   const tasaUsd = useTasaUsd()
+
+  const { data: detalle } = useQuery<{
+    lineas: { id: string; examen: string; precio: number; resultado: { id: string; valores: Record<string, unknown> | null; observaciones: string | null } | null }[]
+  }>({
+    queryKey: ['solicitud', solicitud.id],
+    queryFn: async () => (await api.get(`/solicitudes/${solicitud.id}`)).data,
+    enabled: verDetalle,
+  })
 
   // El total de la solicitud está en USD (moneda base); el cobro en Bs. se
   // convierte automáticamente con la tasa del día.
@@ -221,6 +229,33 @@ function CobroCard(props: {
 
       {sinTasa && (
         <p className="text-xs text-red-600">Configura la tasa del día en Administración → Tasas para cobrar en Bs.</p>
+      )}
+
+      <button
+        onClick={() => setVerDetalle((v) => !v)}
+        className="mt-2 self-start rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+      >
+        {verDetalle ? 'Ocultar exámenes' : 'Ver exámenes'}
+      </button>
+
+      {verDetalle && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          {detalle ? (
+            <ul className="space-y-1.5">
+              {detalle.lineas.map((l) => (
+                <li key={l.id} className="flex items-start justify-between gap-2 text-xs">
+                  <span className="text-slate-700">{l.examen}</span>
+                  <span className="text-right text-slate-500">
+                    <PrecioDual usd={l.precio} tasaUsd={tasaUsd} />
+                    {l.resultado && <span className="block text-emerald-700">Resultado: {l.resultado.valores ? JSON.stringify(l.resultado.valores) : '—'}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-slate-400">Cargando…</p>
+          )}
+        </div>
       )}
 
       <button

@@ -88,7 +88,7 @@ router.patch('/:id/estado', validate(idParamSchema, 'params'), validate(estadoTu
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const { estado } = req.body as z.infer<typeof estadoTurnoSchema>;
 
-    const { data: turno } = await getSupabase().from('turnos').select('id, estado').eq('id', id).maybeSingle();
+    const { data: turno } = await getSupabase().from('turnos').select('id, estado, consulta_id').eq('id', id).maybeSingle();
     if (!turno) return next(notFound('Turno no encontrado'));
 
     const patch: Record<string, unknown> = { estado };
@@ -97,6 +97,26 @@ router.patch('/:id/estado', validate(idParamSchema, 'params'), validate(estadoTu
 
     const { data, error } = await getSupabase().from('turnos').update(patch).eq('id', id).select(COLS).single();
     if (error) return next(badRequest(error.message));
+
+    // Retroalimentación Sala de espera → Agenda: el estado del turno se
+    // refleja en la consulta del día para todos los perfiles.
+    const cid = turno.consulta_id as string | null;
+    if (cid) {
+      const estadoConsulta =
+        estado === 'atendido' ? 'en_curso' : estado === 'cancelado' ? 'cancelada' : null;
+      if (estadoConsulta) {
+        try {
+          const r = await getSupabase()
+            .from('consultas')
+            .update({ estado: estadoConsulta })
+            .eq('id', cid);
+          if (r.error) throw r.error;
+        } catch {
+          // Fail-open.
+        }
+      }
+    }
+
     res.json(data);
   } catch (err) {
     next(err);

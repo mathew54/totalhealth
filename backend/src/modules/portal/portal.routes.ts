@@ -21,6 +21,16 @@ const router = Router();
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_MAX_INTENTOS = 5;
 
+/** Fecha (America/Caracas) de un ISO datetime, formato YYYY-MM-DD. */
+function fechaCaracasDe(iso: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Caracas',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(iso));
+}
+
 /** Cuerpo del POST del portal: paciente opcional (self por defecto) + respuestas.
  * Acepta pacientes cuyo `respuestas` es el esquema del cuestionario de anamnesis. */
 const respuestasPortalSchema = z.object({
@@ -199,7 +209,10 @@ router.get('/mis-resultados', portalAuth, async (req, res, next) => {
       getSupabase().from('solicitudes').select('id, fecha, estado').eq('paciente_id', pid),
       getSupabase().from('examenes_laboratorio').select('id, nombre'),
     ]);
-    const solicitudIds = (solicitudesRes.data ?? []).map((s) => s.id as string);
+    // Las solicitudes anuladas (escondidas) no se muestran al paciente.
+    const solicitudIds = (solicitudesRes.data ?? [])
+      .filter((s) => s.estado !== 'anulada')
+      .map((s) => s.id as string);
     const examenes = new Map((examenesRes.data ?? []).map((e) => [e.id, e.nombre]));
 
     let lineas: { id: string; solicitud_id: string; resultado_id: string | null; examen_id: string }[] = [];
@@ -722,6 +735,18 @@ router.patch('/reservas/:id/reprogramar', portalAuth, validate(idParamSchema, 'p
       .select('id, medico_id, fecha_hora, estado, origen')
       .single();
     if (error) return next(badRequest(error.message));
+
+    // Mueve el turno vinculado a la nueva fecha (retroalimentación con la cola).
+    try {
+      const r = await getSupabase()
+        .from('turnos')
+        .update({ fecha: fechaCaracasDe(fecha_hora) })
+        .eq('consulta_id', id);
+      if (r.error) throw r.error;
+    } catch {
+      // Fail-open.
+    }
+
     res.json(data);
   } catch (err) {
     next(err);
@@ -754,6 +779,19 @@ router.post('/reservas/:id/cancelar', portalAuth, validate(idParamSchema, 'param
       .select('id, fecha_hora, estado')
       .single();
     if (error) return next(badRequest(error.message));
+
+    // Saca de la cola el turno vinculado (retroalimentación con la sala de espera).
+    try {
+      const r = await getSupabase()
+        .from('turnos')
+        .update({ estado: 'cancelado' })
+        .eq('consulta_id', id)
+        .in('estado', ['esperando', 'llamado']);
+      if (r.error) throw r.error;
+    } catch {
+      // Fail-open.
+    }
+
     res.json(data);
   } catch (err) {
     next(err);

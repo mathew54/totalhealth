@@ -347,6 +347,23 @@ a administrador con re-autenticación explícita y justificación auditada.
 3. **Guía de componentes UI/UX**: wizard paso a paso (Layout por módulos),
    estados de edición/lectura y mensajes de alerta en borrado.
 
+- [x] **Módulo de Agenda con vistas Día / Semana / Mes** integrado a la sala de
+  espera. Backend: `GET /api/consultas` acepta `desde`/`hasta` (rango para
+  semana/mes) y enriquece cada consulta con `paciente`, `medico`
+  (especialidad/categoría) y el `turno` de la cola asociado (`estado`, `numero`,
+  `prioridad`), de modo que lo que ocurra en la sala de espera se refleja en la
+  agenda (En cola / Llamado / Atendido / Saltado / Cancelado). Frontend:
+  `ConsultasPage` con selector Día/Semana/Mes, navegación anterior/hoy/
+  siguiente, filtro por estado ("Por atender" oculta completadas/canceladas),
+  auto-refresco 15 s, agrupación por especialidad → médico con horario, vista
+  semanal en rejilla médico×día y vista mensual tipo calendario que salta al
+  día al pulsar una celda. Al hacer clic en una cita se abre el resumen
+  (paciente, médico, especialidad, estado del turno) con botón **"Ir a la sala
+  de espera"** que navega a `/turnos?consulta=<id>`; `TurnosPage` resalta y
+  hace scroll al turno vinculado (auto-refresco 10 s). Corregido además el seed:
+  las consultas de hoy usaban `fecha_hora` solo fecha (vista de día vacía);
+  ahora usan ISO datetime en hora de Caracas (`hoyA`).
+
 ## Nuevo desarrollo — Perfiles y Dashboards por Rol (Multiespecialidad)
 
 La plataforma debe gestionar el acceso para tres perfiles de usuario principales:

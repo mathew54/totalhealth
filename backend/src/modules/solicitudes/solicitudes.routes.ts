@@ -5,7 +5,7 @@ import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { validate } from '../../middleware/validate.js';
-import { badRequest, notFound, forbidden } from '../../utils/httpError.js';
+import { badRequest, notFound, forbidden, conflict } from '../../utils/httpError.js';
 import { notificarResultadoListo } from '../../services/notifier.js';
 import { evaluarAlertas, registrarAlertas } from '../alertas/alertas.service.js';
 import {
@@ -14,6 +14,7 @@ import {
   resultadosSchema,
   solicitudesQuery,
   updateEstadoSchema,
+  updateSolicitudSchema,
 } from './solicitudes.validators.js';
 
 const router = Router();
@@ -54,11 +55,12 @@ async function detalleLineas(solicitudId: string) {
 
 /**
  * POST /api/solicitudes
- * El médico ordena exámenes (desde una consulta o directo). Crea solicitud + líneas.
+ * Ordena exámenes (desde una consulta o directo). Crea solicitud + líneas.
+ * Médico, laboratorio, secretaria y admin pueden generar órdenes.
  */
 router.post(
   '/',
-  requireRole('medico', 'admin', 'super_root'),
+  requireRole('medico', 'laboratorio', 'secretaria', 'admin', 'super_root'),
   validate(createSolicitudSchema),
   async (req, res, next) => {
     try {
@@ -78,7 +80,7 @@ router.post(
       if (pErr) return next(pErr);
       if (!paciente) return next(notFound('Paciente no encontrado'));
 
-      const medico_id = user.role === 'medico' ? user.id : body.consulta_id ? undefined : user.id;
+      const medico_id = user.role === 'medico' ? user.id : null;
 
       const { data: solicitud, error: sErr } = await getSupabase()
         .from('solicitudes')
@@ -87,6 +89,7 @@ router.post(
           paciente_id: body.paciente_id,
           medico_id,
           clinica_id: user.clinicaId,
+          fecha: body.fecha ?? new Date().toISOString(),
           estado: 'pendiente',
           cobrado: false,
           nota: body.nota,
@@ -120,13 +123,18 @@ router.post(
  */
 router.get('/', validate(solicitudesQuery, 'query'), async (req, res, next) => {
   try {
-    const { estado, cobrado, fecha, limit } = req.query as unknown as z.infer<typeof solicitudesQuery>;
+    const { estado, cobrado, fecha, incluir_anuladas, limit } = req.query as unknown as z.infer<typeof solicitudesQuery>;
     const user = req.user!;
 
     let query = getSupabase().from('solicitudes').select(SOLICITUD_COLS);
     if (user.role === 'medico') query = query.eq('medico_id', user.id);
 
-    if (estado) query = query.eq('estado', estado);
+    if (estado) {
+      query = query.eq('estado', estado);
+    } else if (incluir_anuladas !== 'true') {
+      // Por defecto se ocultan las solicitudes anuladas (escondidas).
+      query = query.in('estado', ['pendiente', 'en_proceso', 'listo', 'entregado']);
+    }
     if (cobrado) query = query.eq('cobrado', cobrado === 'true');
     if (fecha) query = query.gte('fecha', `${fecha}T00:00:00.000Z`).lte('fecha', `${fecha}T23:59:59.999Z`);
 
@@ -185,6 +193,122 @@ router.get('/:id', validate(idParamSchema, 'params'), async (req, res, next) => 
 });
 
 /**
+ * PATCH /api/solicitudes/:id
+ * Edita una solicitud pendiente: cambia la nota y/o la lista de exámenes
+ * (reemplaza las líneas sin resultado). No afecta solicitudes en proceso,
+ * listas, entregadas o anuladas.
+ */
+router.patch(
+  '/:id',
+  requireRole('medico', 'laboratorio', 'secretaria', 'admin', 'super_root'),
+  validate(idParamSchema, 'params'),
+  validate(updateSolicitudSchema),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params as z.infer<typeof idParamSchema>;
+      const body = req.body as z.infer<typeof updateSolicitudSchema>;
+      const user = req.user!;
+
+      const { data: solicitud, error: gErr } = await getSupabase()
+        .from('solicitudes')
+        .select(SOLICITUD_COLS)
+        .eq('id', id)
+        .single();
+      if (gErr || !solicitud) return next(notFound('Solicitud no encontrada'));
+      if (user.role === 'medico' && solicitud.medico_id !== user.id) {
+        return next(forbidden('Solo puedes editar tus propias solicitudes'));
+      }
+      if (solicitud.estado !== 'pendiente') {
+        return next(conflict('Solo se pueden editar solicitudes pendientes'));
+      }
+
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (body.nota !== undefined) patch.nota = body.nota;
+
+      if (body.examenes) {
+        const catalogo = await catalogoExamenes();
+        for (const examenId of body.examenes) {
+          if (!catalogo.has(examenId)) return next(badRequest('Uno de los exámenes no existe'));
+        }
+
+        // Reemplaza las líneas actuales por la nueva selección.
+        const { error: delErr } = await getSupabase().from('solicitudes_detalle').delete().eq('solicitud_id', id);
+        if (delErr) return next(badRequest(delErr.message));
+
+        const lineas = body.examenes.map((examen_id) => ({
+          solicitud_id: id,
+          examen_id,
+          precio: catalogo.get(examen_id)!.precio,
+        }));
+        const { data: insertadas, error: lErr } = await getSupabase()
+          .from('solicitudes_detalle')
+          .insert(lineas)
+          .select('id, examen_id, precio');
+        if (lErr) return next(badRequest(lErr.message));
+        (patch as { lineas?: unknown[] }).lineas = insertadas;
+      }
+
+      const { data: updated, error } = await getSupabase()
+        .from('solicitudes')
+        .update(patch)
+        .eq('id', id)
+        .select(SOLICITUD_COLS)
+        .single();
+      if (error) return next(badRequest(error.message));
+
+      const lineas = await detalleLineas(id);
+      const total = (lineas as { precio: number }[]).reduce((acc, l) => acc + Number(l.precio), 0);
+      res.json({ ...updated, total, lineas });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * POST /api/solicitudes/:id/anular
+ * Anulación suave ("esconder"): marca la solicitud como anulada. Desaparece de
+ * la cola del laboratorio y de los listados del paciente/portal, pero queda
+ * registrada en el historial interno. Se puede volver a activar.
+ */
+router.post(
+  '/:id/anular',
+  requireRole('medico', 'laboratorio', 'secretaria', 'admin', 'super_root'),
+  validate(idParamSchema, 'params'),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params as z.infer<typeof idParamSchema>;
+      const { activa } = (req.body ?? {}) as { activa?: boolean };
+      const user = req.user!;
+
+      const { data: solicitud, error: gErr } = await getSupabase()
+        .from('solicitudes')
+        .select(SOLICITUD_COLS)
+        .eq('id', id)
+        .single();
+      if (gErr || !solicitud) return next(notFound('Solicitud no encontrada'));
+      if (user.role === 'medico' && solicitud.medico_id !== user.id) {
+        return next(forbidden('Solo puedes anular tus propias solicitudes'));
+      }
+
+      // "esconder" = anulada; activa=false vuelve a mostrarla como pendiente.
+      const nuevoEstado = activa === false ? 'pendiente' : 'anulada';
+      const { data: updated, error } = await getSupabase()
+        .from('solicitudes')
+        .update({ estado: nuevoEstado, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select(SOLICITUD_COLS)
+        .single();
+      if (error) return next(badRequest(error.message));
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
  * GET /api/solicitudes/pacientes/:id/resultados
  * Historial de resultados de un paciente (lectura global del cuerpo médico)
  * para tendencias: agrupa valores, examen y fecha por resultado firmado.
@@ -195,10 +319,13 @@ router.get('/pacientes/:id/resultados', validate(idParamSchema, 'params'), authR
 
     const { data: sols } = await getSupabase()
       .from('solicitudes')
-      .select('id, fecha')
+      .select('id, fecha, estado')
       .eq('paciente_id', id)
       .order('fecha', { ascending: true });
-    const solicitudIds = (sols ?? []).map((s) => s.id);
+    // Los resultados de solicitudes anuladas no se exponen en tendencias.
+    const solicitudIds = (sols ?? [])
+      .filter((s) => s.estado !== 'anulada')
+      .map((s) => s.id);
     if (solicitudIds.length === 0) return res.json([]);
 
     const { data: lineas } = await getSupabase()

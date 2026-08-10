@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, getApiError } from '../../lib/api'
 import PrintHeader from '../../components/ui/PrintHeader'
 
 interface Turno {
   id: string
+  paciente_id: string
+  consulta_id: string | null
   numero: number
   fecha: string
   estado: 'esperando' | 'llamado' | 'atendido' | 'saltado' | 'cancelado'
@@ -21,10 +24,20 @@ interface Paciente {
   nombre_completo: string
 }
 
+interface CitaHoy {
+  id: string
+  paciente_id: string
+  estado: string
+}
+
+const fechaHoy = () => new Date().toISOString().slice(0, 10)
+
 const PRIORIDAD_LABEL: Record<string, string> = { normal: 'Normal', prioridad: 'Prioridad', urgente: 'Urgente' }
 
 export default function TurnosPage() {
   const queryClient = useQueryClient()
+  const [searchParams] = useSearchParams()
+  const consultaDestacada = searchParams.get('consulta')
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [selectedPaciente, setSelectedPaciente] = useState<string>('')
@@ -33,7 +46,21 @@ export default function TurnosPage() {
   const { data: turnos = [], isLoading } = useQuery<Turno[]>({
     queryKey: ['turnos', 'hoy'],
     queryFn: async () => (await api.get('/turnos')).data,
+    refetchInterval: 10000,
   })
+
+  const turnoDestacado = useMemo(
+    () => (consultaDestacada ? turnos.find((t) => t.consulta_id === consultaDestacada) ?? null : null),
+    [turnos, consultaDestacada],
+  )
+  const destacadoRef = useRef<HTMLDivElement | null>(null)
+  const turnoDestacadoId = turnoDestacado?.id
+
+  useEffect(() => {
+    if (turnoDestacadoId) {
+      destacadoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [turnoDestacadoId])
 
   const { data: pacientes = [] } = useQuery<Paciente[]>({
     queryKey: ['pacientes', 'turnos'],
@@ -41,10 +68,17 @@ export default function TurnosPage() {
     enabled: showForm,
   })
 
+  const { data: citasHoy = [] } = useQuery<CitaHoy[]>({
+    queryKey: ['consultas', 'turnos', 'hoy'],
+    queryFn: async () => (await api.get('/consultas', { params: { fecha: fechaHoy() } })).data,
+    enabled: showForm,
+  })
+
   const crearTurno = useMutation({
-    mutationFn: (payload: { paciente_id: string; prioridad?: string }) => api.post('/turnos', payload),
+    mutationFn: (payload: { paciente_id: string; consulta_id?: string; prioridad?: string }) => api.post('/turnos', payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['turnos'] })
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
       setShowForm(false)
       setSelectedPaciente('')
       setError(null)
@@ -54,12 +88,31 @@ export default function TurnosPage() {
 
   const cambiarEstado = useMutation({
     mutationFn: ({ id, estado }: { id: string; estado: string }) => api.patch(`/turnos/${id}/estado`, { estado }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['turnos'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['turnos'] })
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
+    },
     onError: (e) => setError(getApiError(e)),
   })
 
   const activos = turnos.filter((t) => t.estado === 'esperando' || t.estado === 'llamado')
   const atendidos = turnos.filter((t) => t.estado === 'atendido')
+
+  const citaPaciente = selectedPaciente
+    ? citasHoy.find((c) => c.paciente_id === selectedPaciente && (c.estado === 'programada' || c.estado === 'en_curso'))
+    : undefined
+  const turnoPacienteYaExiste = selectedPaciente
+    ? turnos.find((t) => t.paciente_id === selectedPaciente && (t.estado === 'esperando' || t.estado === 'llamado'))
+    : undefined
+
+  function generarTurno() {
+    if (!selectedPaciente || turnoPacienteYaExiste) return
+    crearTurno.mutate({
+      paciente_id: selectedPaciente,
+      consulta_id: citaPaciente?.id,
+      prioridad,
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -101,9 +154,19 @@ export default function TurnosPage() {
             </Field>
           </div>
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {selectedPaciente && turnoPacienteYaExiste && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Este paciente ya está en la cola con el turno #{turnoPacienteYaExiste.numero}.
+            </p>
+          )}
+          {selectedPaciente && citaPaciente && !turnoPacienteYaExiste && (
+            <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              Se vinculará a la consulta programada de hoy del paciente.
+            </p>
+          )}
           <button
-            onClick={() => selectedPaciente && crearTurno.mutate({ paciente_id: selectedPaciente, prioridad })}
-            disabled={!selectedPaciente || crearTurno.isPending}
+            onClick={generarTurno}
+            disabled={!selectedPaciente || Boolean(turnoPacienteYaExiste) || crearTurno.isPending}
             className="mt-4 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {crearTurno.isPending ? 'Creando…' : 'Generar turno'}
@@ -121,7 +184,13 @@ export default function TurnosPage() {
           ) : (
             <div className="grid gap-px bg-slate-100 sm:grid-cols-2 lg:grid-cols-3">
               {activos.map((t) => (
-                <TurnoCard key={t.id} turno={t} onEstado={(estado) => cambiarEstado.mutate({ id: t.id, estado })} />
+                <TurnoCard
+                  key={t.id}
+                  turno={t}
+                  destacado={turnoDestacadoId === t.id}
+                  ref={turnoDestacadoId === t.id ? destacadoRef : undefined}
+                  onEstado={(estado) => cambiarEstado.mutate({ id: t.id, estado })}
+                />
               ))}
             </div>
           )}
@@ -136,7 +205,13 @@ export default function TurnosPage() {
           ) : (
             <div className="grid gap-px bg-slate-100 sm:grid-cols-2 lg:grid-cols-3">
               {atendidos.map((t) => (
-                <TurnoCard key={t.id} turno={t} onEstado={(estado) => cambiarEstado.mutate({ id: t.id, estado })} />
+                <TurnoCard
+                  key={t.id}
+                  turno={t}
+                  destacado={turnoDestacadoId === t.id}
+                  ref={turnoDestacadoId === t.id ? destacadoRef : undefined}
+                  onEstado={(estado) => cambiarEstado.mutate({ id: t.id, estado })}
+                />
               ))}
             </div>
           )}
@@ -146,10 +221,20 @@ export default function TurnosPage() {
   )
 }
 
-function TurnoCard({ turno, onEstado }: { turno: Turno; onEstado: (estado: string) => void }) {
+function TurnoCard({ turno, destacado, ref, onEstado }: {
+  turno: Turno
+  destacado?: boolean
+  ref?: Ref<HTMLDivElement>
+  onEstado: (estado: string) => void
+}) {
   const llamando = turno.estado === 'llamado'
   return (
-    <div className={`flex flex-col gap-3 bg-white p-4 ${llamando ? 'ring-2 ring-inset ring-amber-400' : ''}`}>
+    <div
+      ref={ref}
+      className={`flex scroll-mt-6 flex-col gap-3 bg-white p-4 ${
+        destacado ? 'ring-2 ring-inset ring-brand-500' : llamando ? 'ring-2 ring-inset ring-amber-400' : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className={`text-3xl font-bold ${llamando ? 'text-amber-600' : 'text-slate-800'}`}>#{turno.numero}</p>

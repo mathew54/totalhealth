@@ -13,10 +13,12 @@ interface Solicitud {
   cobrado: boolean
   fecha: string
   total: number
+  paciente: { id: string; cedula: string; nombre_completo: string } | null
 }
 
 interface Linea {
   id: string
+  examen_id: string
   examen: string
   precio: number
   resultado: { id: string; valores: Record<string, unknown> | null; observaciones: string | null } | null
@@ -24,7 +26,19 @@ interface Linea {
 
 interface SolicitudDetalle extends Solicitud {
   lineas: Linea[]
-  paciente: { id: string; cedula: string; nombre_completo: string }
+}
+
+interface Examen {
+  id: string
+  nombre: string
+  categoria: string | null
+  precio: number
+}
+
+interface Paciente {
+  id: string
+  cedula: string
+  nombre_completo: string
 }
 
 interface Reactivo {
@@ -58,17 +72,25 @@ const ESTADO_STYLES: Record<string, string> = {
   en_proceso: 'bg-amber-100 text-amber-700',
   listo: 'bg-green-100 text-green-700',
   entregado: 'bg-slate-200 text-slate-600',
+  anulada: 'bg-red-100 text-red-700',
 }
 
 export default function LaboratorioPage() {
+  const queryClient = useQueryClient()
   const [tab, setTab] = useState<'cola' | 'reactivos'>('cola')
   const [estado, setEstado] = useState<string>('')
   const [detalleId, setDetalleId] = useState<string | null>(null)
+  const [crearAbierto, setCrearAbierto] = useState(false)
   const profile = useSessionStore((s) => s.profile)
 
   const { data: solicitudes = [], isLoading } = useQuery<Solicitud[]>({
     queryKey: ['solicitudes', estado],
-    queryFn: async () => (await api.get('/solicitudes', { params: estado ? { estado } : {} })).data,
+    queryFn: async () =>
+      (
+        await api.get('/solicitudes', {
+          params: estado === 'anulada' ? { estado: 'anulada', incluir_anuladas: 'true' } : estado ? { estado } : {},
+        })
+      ).data,
     refetchInterval: 15000,
   })
 
@@ -82,7 +104,14 @@ export default function LaboratorioPage() {
           <h1 className="text-xl font-bold text-slate-800">Laboratorio</h1>
           <p className="text-sm text-slate-500">Cola de exámenes y resultados</p>
         </div>
+        {tab === 'cola' && (
+          <button onClick={() => setCrearAbierto((v) => !v)} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+            {crearAbierto ? 'Cancelar' : '+ Nueva solicitud'}
+          </button>
+        )}
       </div>
+
+      {crearAbierto && <NuevaSolicitudForm onCancel={() => setCrearAbierto(false)} />}
 
       <div className="flex gap-2">
         <TabButton active={tab === 'cola'} onClick={() => setTab('cola')}>Cola de exámenes</TabButton>
@@ -96,6 +125,7 @@ export default function LaboratorioPage() {
             {ESTADOS.map((e) => (
               <FilterChip key={e} active={estado === e} onClick={() => setEstado(e)}>{e.replace('_', ' ')}</FilterChip>
             ))}
+            <FilterChip active={estado === 'anulada'} onClick={() => setEstado('anulada')}>Anuladas</FilterChip>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
@@ -115,7 +145,9 @@ export default function LaboratorioPage() {
                       <EstadoBadge estado={s.estado} />
                       {s.cobrado && <span className="text-xs text-green-600">pagada</span>}
                     </div>
-                    <p className="mt-2 text-sm font-semibold text-slate-800"><PrecioDual usd={s.total} tasaUsd={tasaUsd} /></p>
+                    <p className="mt-2 text-sm font-semibold text-slate-800">{s.paciente?.nombre_completo ?? 'Paciente'}</p>
+                    <p className="text-xs text-slate-400">{s.paciente?.cedula ?? ''}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800"><PrecioDual usd={s.total} tasaUsd={tasaUsd} /></p>
                     <p className="text-xs text-slate-400">{new Date(s.fecha).toLocaleString()}</p>
                   </button>
                 ))}
@@ -127,7 +159,191 @@ export default function LaboratorioPage() {
         <ReactivosTab />
       )}
 
-      {detalleId && <DetalleModal solicitudId={detalleId} rol={profile?.role} onClose={() => setDetalleId(null)} />}
+      {detalleId && (
+        <DetalleModal
+          solicitudId={detalleId}
+          rol={profile?.role}
+          onClose={() => setDetalleId(null)}
+          onMutado={() => queryClient.invalidateQueries({ queryKey: ['solicitudes'] })}
+        />
+      )}
+    </div>
+  )
+}
+
+function NuevaSolicitudForm({ onCancel }: { onCancel: () => void }) {
+  const queryClient = useQueryClient()
+  const [pacienteId, setPacienteId] = useState('')
+  const [examenes, setExamenes] = useState<string[]>([])
+  const [q, setQ] = useState('')
+  const [fecha, setFecha] = useState(() => {
+    const d = new Date()
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+    return d.toISOString().slice(0, 16)
+  })
+  const [error, setError] = useState<string | null>(null)
+  const tasaUsd = useTasaUsd()
+
+  const { data: pacientes = [] } = useQuery<Paciente[]>({
+    queryKey: ['pacientes', 'solicitud', q],
+    queryFn: async () => (await api.get('/pacientes', { params: { q } })).data,
+  })
+
+  const { data: catalogo = [] } = useQuery<Examen[]>({
+    queryKey: ['examenes', 'solicitud'],
+    queryFn: async () => (await api.get('/examenes')).data,
+  })
+
+  const crear = useMutation({
+    mutationFn: (payload: { paciente_id: string; examenes: string[]; fecha: string; nota?: string }) => api.post('/solicitudes', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+      setError(null)
+      onCancel()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  const seleccionados = catalogo.filter((c) => examenes.includes(c.id))
+  const total = seleccionados.reduce((acc, c) => acc + Number(c.precio), 0)
+
+  function toggleExamen(id: string) {
+    setExamenes((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
+  }
+
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!pacienteId || examenes.length === 0) return
+    const fd = new FormData(e.currentTarget)
+    crear.mutate({ paciente_id: pacienteId, examenes, fecha: new Date(fecha).toISOString(), nota: String(fd.get('nota') ?? '').trim() || undefined })
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
+      <Field label="Fecha y hora *">
+        <input
+          type="datetime-local"
+          value={fecha}
+          onChange={(e) => setFecha(e.target.value)}
+          className={inputCls}
+        />
+        <p className="mt-1 text-xs text-slate-400">Define la fecha y hora de la solicitud; las listas se ordenan por este valor (más recientes primero).</p>
+      </Field>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Field label="Paciente *">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar por cédula o nombre…"
+            className={inputCls}
+          />
+          <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-slate-200">
+            {pacientes.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPacienteId(p.id)}
+                className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-slate-50 ${pacienteId === p.id ? 'bg-brand-50' : ''}`}
+              >
+                <span className="font-medium text-slate-800">{p.nombre_completo}</span>
+                <span className="text-xs text-slate-400">{p.cedula}</span>
+              </button>
+            ))}
+            {pacientes.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">Sin resultados.</p>}
+          </div>
+        </Field>
+
+        <Field label="Exámenes *">
+          <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
+            {catalogo.map((c) => (
+              <label key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50">
+                <input type="checkbox" checked={examenes.includes(c.id)} onChange={() => toggleExamen(c.id)} className="accent-brand-600" />
+                <span className="flex-1 text-slate-700">{c.nombre}</span>
+                <span className="text-xs text-slate-400"><PrecioDual usd={Number(c.precio)} tasaUsd={tasaUsd} /></span>
+              </label>
+            ))}
+          </div>
+        </Field>
+      </div>
+
+      <Field label="Nota">
+        <textarea name="nota" rows={2} placeholder="Indicaciones para la toma de muestra…" className={inputCls} />
+      </Field>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-600">
+          {seleccionados.length} examen(es) · Total <strong><PrecioDual usd={total} tasaUsd={tasaUsd} /></strong>
+        </p>
+        <div className="flex gap-2">
+          <button type="button" onClick={onCancel} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={!pacienteId || examenes.length === 0 || crear.isPending}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {crear.isPending ? 'Creando…' : 'Crear solicitud'}
+          </button>
+        </div>
+      </div>
+      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+    </form>
+  )
+}
+
+function EditarExamenesForm({ solicitudId, iniciales, onDone }: { solicitudId: string; iniciales: string[]; onDone: () => void }) {
+  const queryClient = useQueryClient()
+  const [examenes, setExamenes] = useState<string[]>(iniciales)
+  const [error, setError] = useState<string | null>(null)
+  const tasaUsd = useTasaUsd()
+
+  const { data: catalogo = [] } = useQuery<Examen[]>({
+    queryKey: ['examenes', 'solicitud'],
+    queryFn: async () => (await api.get('/examenes')).data,
+  })
+
+  const guardar = useMutation({
+    mutationFn: (payload: { examenes: string[] }) => api.patch(`/solicitudes/${solicitudId}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+      queryClient.invalidateQueries({ queryKey: ['solicitud', solicitudId] })
+      setError(null)
+      onDone()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  const total = catalogo.filter((c) => examenes.includes(c.id)).reduce((acc, c) => acc + Number(c.precio), 0)
+
+  function toggleExamen(id: string) {
+    setExamenes((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <p className="text-sm font-semibold text-slate-800">Editar exámenes</p>
+      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+        {catalogo.map((c) => (
+          <label key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50">
+            <input type="checkbox" checked={examenes.includes(c.id)} onChange={() => toggleExamen(c.id)} className="accent-brand-600" />
+            <span className="flex-1 text-slate-700">{c.nombre}</span>
+            <span className="text-xs text-slate-400"><PrecioDual usd={Number(c.precio)} tasaUsd={tasaUsd} /></span>
+          </label>
+        ))}
+      </div>
+      {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <p className="text-sm text-slate-600">{examenes.length} examen(es) · Total <strong><PrecioDual usd={total} tasaUsd={tasaUsd} /></strong></p>
+        <button
+          onClick={() => guardar.mutate({ examenes })}
+          disabled={examenes.length === 0 || guardar.isPending}
+          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+        >
+          {guardar.isPending ? 'Guardando…' : 'Guardar cambios'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -210,11 +426,13 @@ function ReactivosTab() {
   )
 }
 
-function DetalleModal({ solicitudId, rol, onClose }: { solicitudId: string; rol?: string; onClose: () => void }) {
+function DetalleModal({ solicitudId, rol, onClose, onMutado }: { solicitudId: string; rol?: string; onClose: () => void; onMutado?: () => void }) {
   const queryClient = useQueryClient()
   const [vals, setVals] = useState<Record<string, { valor: string; obs: string }>>({})
   const [csv, setCsv] = useState('')
   const [csvMsg, setCsvMsg] = useState<string | null>(null)
+  const [editando, setEditando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const tasaUsd = useTasaUsd()
 
   const { data: solicitud, isLoading } = useQuery<SolicitudDetalle>({
@@ -258,6 +476,23 @@ function DetalleModal({ solicitudId, rol, onClose }: { solicitudId: string; rol?
     },
   })
 
+  const anular = useMutation({
+    mutationFn: (activa: boolean) => api.post(`/solicitudes/${solicitudId}/anular`, { activa }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+      queryClient.invalidateQueries({ queryKey: ['solicitud', solicitudId] })
+      setEditando(false)
+      setError(null)
+      onMutado?.()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  const esLab = rol === 'laboratorio'
+  const puedeEditar = ['laboratorio', 'secretaria', 'admin', 'super_root', 'medico'].includes(rol ?? '')
+  const esPendiente = solicitud?.estado === 'pendiente'
+  const esAnulada = solicitud?.estado === 'anulada'
+
   function submitResultados() {
     const lineas = (solicitud?.lineas ?? [])
       .filter((l) => !l.resultado && vals[l.id]?.valor?.trim())
@@ -296,8 +531,6 @@ function DetalleModal({ solicitudId, rol, onClose }: { solicitudId: string; rol?
     setCsvMsg(`${asociadas} examen(es) cargado(s)${sinMatch.length ? ` · sin coincidencia: ${[...new Set(sinMatch)].join(', ')}` : ''}`)
   }
 
-  const esLab = rol === 'laboratorio'
-
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-6 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -330,6 +563,35 @@ function DetalleModal({ solicitudId, rol, onClose }: { solicitudId: string; rol?
                 )}
                 <button onClick={() => changeEstado.mutate('listo')} className="rounded-lg bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700">Marcar listo</button>
               </div>
+            )}
+
+            {puedeEditar && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {esPendiente && !esAnulada && (
+                  <button onClick={() => setEditando((v) => !v)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                    {editando ? 'Cancelar edición' : 'Editar exámenes'}
+                  </button>
+                )}
+                {esAnulada ? (
+                  <button onClick={() => anular.mutate(false)} disabled={anular.isPending} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                    {anular.isPending ? '…' : 'Reactivar solicitud'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { if (confirm('¿Anular (esconder) esta solicitud? Desaparecerá de la cola y de los resultados del paciente.')) anular.mutate(true) }}
+                    disabled={anular.isPending}
+                    className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    {anular.isPending ? '…' : 'Anular / Esconder'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+            {editando && esPendiente && (
+              <EditarExamenesForm solicitudId={solicitudId} iniciales={solicitud!.lineas.map((l) => l.examen_id)} onDone={() => { setEditando(false); onMutado?.() }} />
             )}
 
             <div className="mt-4 space-y-3">

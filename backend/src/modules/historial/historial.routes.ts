@@ -71,6 +71,58 @@ router.get('/especialidades', async (_req, res, next) => {
 });
 
 /**
+ * Resultados de laboratorio del paciente (solicitudes no anuladas + líneas con
+ * su resultado). Visible para todo el staff autenticado: médico, secretaria,
+ * laboratorio y admin (el portal lo consume por su propia ruta).
+ */
+async function resultadosLaboratorioDe(pacienteId: string) {
+  const { data: sols } = await getSupabase()
+    .from('solicitudes')
+    .select('id, fecha, estado, cobrado')
+    .eq('paciente_id', pacienteId)
+    .order('fecha', { ascending: false });
+  const solicitudes = (sols ?? []).filter((s) => s.estado !== 'anulada');
+  const solicitudIds = solicitudes.map((s) => s.id as string);
+  if (solicitudIds.length === 0) return [];
+
+  const [{ data: lineas }, { data: examenes }] = await Promise.all([
+    getSupabase().from('solicitudes_detalle').select('id, solicitud_id, examen_id, resultado_id, precio').in('solicitud_id', solicitudIds),
+    getSupabase().from('examenes_laboratorio').select('id, nombre'),
+  ]);
+
+  const detalleIds = (lineas ?? []).map((l) => l.id as string);
+  let resultados: Record<string, unknown>[] = [];
+  if (detalleIds.length) {
+    const { data } = await getSupabase().from('resultados').select('*').in('solicitud_detalle_id', detalleIds);
+    resultados = data ?? [];
+  }
+
+  const nombres = new Map((examenes ?? []).map((e) => [e.id, e.nombre]));
+  const resultadoPorDetalle = new Map(resultados.map((r) => [r.solicitud_detalle_id, r]));
+  const lineasPorSolicitud = new Map<string, { id: string; examen_id: string; examen: string; precio: number; resultado: Record<string, unknown> | null }[]>();
+
+  for (const l of lineas ?? []) {
+    const arr = lineasPorSolicitud.get(String(l.solicitud_id)) ?? [];
+    arr.push({
+      id: String(l.id),
+      examen_id: String(l.examen_id),
+      examen: nombres.get(String(l.examen_id)) ?? String(l.examen_id),
+      precio: Number(l.precio),
+      resultado: resultadoPorDetalle.get(String(l.id)) ?? null,
+    });
+    lineasPorSolicitud.set(String(l.solicitud_id), arr);
+  }
+
+  return solicitudes.map((s) => ({
+    id: s.id,
+    fecha: s.fecha,
+    estado: s.estado,
+    cobrado: s.cobrado,
+    lineas: lineasPorSolicitud.get(String(s.id)) ?? [],
+  }));
+}
+
+/**
  * GET /api/historial/pacientes/:id
  * Expediente digital: registros compartidos + correcciones, alertas críticas
  * (banner) e interconsultas del paciente. Lectura global para el personal
@@ -106,6 +158,9 @@ router.get('/pacientes/:id', validate(pacienteIdParamSchema, 'params'), async (r
         : Promise.resolve({ data: [] }),
     ]);
 
+    // Resultados de laboratorio: visibles para todo el staff (incluida secretaria).
+    const resultados = await resultadosLaboratorioDe(id);
+
     const registros = historial.data ?? [];
     const correcciones = await Promise.all(
       registros.map(async (r) => {
@@ -137,6 +192,7 @@ router.get('/pacientes/:id', validate(pacienteIdParamSchema, 'params'), async (r
     res.json({
       paciente,
       alertas_criticas: alertas.data ?? [],
+      resultados_laboratorio: resultados,
       historial: registros.map((r, idx) => ({
         ...r,
         medico_nombre: perfiles.get(String(r.medico_id)) ?? null,

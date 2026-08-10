@@ -11,7 +11,7 @@ interface Domicilio {
   telefono: string | null
   fecha_visita: string | null
   estado: 'solicitada' | 'programada' | 'en_ruta' | 'tomada' | 'completada' | 'cancelada'
-  ubicacion: string | null
+  ubicacion?: string | { lat: number; lng: number } | null
   notas: string | null
   created_at: string
 }
@@ -154,7 +154,7 @@ export default function DomiciliosPage() {
                     <p className="text-xs text-slate-500">Visita: {new Date(d.fecha_visita).toLocaleString()}</p>
                   )}
                   {d.ubicacion && (
-                    <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">📍 {d.ubicacion}</p>
+                    <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">📍 {formatearUbicacion(d.ubicacion)}</p>
                   )}
                   {d.notas && <p className="text-xs text-slate-400">{d.notas}</p>}
 
@@ -184,6 +184,13 @@ export default function DomiciliosPage() {
 
 function pacienteNombre(pacientes: Paciente[], id: string | null) {
   return pacientes.find((p) => p.id === id)?.nombre_completo ?? 'Paciente'
+}
+
+function formatearUbicacion(ubicacion: Domicilio['ubicacion']): string {
+  if (!ubicacion) return ''
+  if (typeof ubicacion === 'string') return ubicacion
+  const { lat, lng } = ubicacion
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`
 }
 
 function estadoCls(estado: string) {

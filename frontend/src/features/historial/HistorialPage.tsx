@@ -71,11 +71,32 @@ interface Interconsulta {
   created_at: string
 }
 
+interface LineaResultado {
+  id: string
+  examen: string
+  precio: number
+  resultado: {
+    id: string
+    valores: Record<string, unknown> | null
+    observaciones: string | null
+    procesado_at: string | null
+  } | null
+}
+
+interface ResultadoLaboratorio {
+  id: string
+  fecha: string
+  estado: string
+  cobrado: boolean
+  lineas: LineaResultado[]
+}
+
 interface Expediente {
   paciente: Paciente
   alertas_criticas: AlertaCritica[]
   historial: Registro[]
   interconsultas: Interconsulta[]
+  resultados_laboratorio: ResultadoLaboratorio[]
 }
 
 const TIPOS = ['evolucion', 'procedimiento', 'interconsulta', 'resultado', 'otro']
@@ -98,6 +119,7 @@ export default function HistorialPage() {
   const profile = useSessionStore((s) => s.profile)
   const role = profile?.role ?? 'secretaria'
   const esPersonalMedico = ['medico', 'admin', 'super_root'].includes(role)
+  const puedeVerExpediente = esPersonalMedico || role === 'secretaria'
 
   const [q, setQ] = useState('')
   const [pacienteId, setPacienteId] = useState<string | null>(null)
@@ -105,7 +127,7 @@ export default function HistorialPage() {
   const { data: pacientes = [] } = useQuery<Paciente[]>({
     queryKey: ['pacientes', 'historial', q],
     queryFn: async () => (await api.get('/pacientes', { params: { q } })).data,
-    enabled: esPersonalMedico,
+    enabled: puedeVerExpediente,
   })
 
   return (
@@ -157,13 +179,26 @@ function ExpedienteView({ pacienteId }: { pacienteId: string }) {
   const esPersonalMedico = ['medico', 'admin', 'super_root'].includes(role)
   const esAdmin = role === 'admin' || role === 'super_root'
 
-  const [tab, setTab] = useState<'compartido' | 'privadas' | 'interconsultas' | 'cuestionario'>('compartido')
+  const [tab, setTab] = useState<'compartido' | 'privadas' | 'interconsultas' | 'cuestionario' | 'resultados'>('compartido')
 
   const { data: expediente, isLoading } = useQuery<Expediente>({
     queryKey: ['historial', 'expediente', pacienteId],
     queryFn: async () => (await api.get(`/historial/pacientes/${pacienteId}`)).data,
-    enabled: esPersonalMedico,
+    enabled: true,
   })
+
+  // La secretaria solo accede a la sección de resultados de laboratorio.
+  const tabs = esPersonalMedico
+    ? ([
+        ['compartido', 'Compartido'],
+        ['privadas', 'Notas privadas'],
+        ['interconsultas', 'Interconsultas'],
+        ['cuestionario', 'Cuestionario'],
+        ['resultados', 'Laboratorio'],
+      ] as const)
+    : ([['resultados', 'Laboratorio']] as const)
+
+  const tabActual = tabs.some(([t]) => t === tab) ? tab : 'resultados'
 
   return (
     <div className="space-y-4">
@@ -180,13 +215,13 @@ function ExpedienteView({ pacienteId }: { pacienteId: string }) {
           </p>
         </div>
         <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
-          {(['compartido', 'privadas', 'interconsultas', 'cuestionario'] as const).map((t) => (
+          {tabs.map(([t, label]) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium capitalize ${tab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium ${tabActual === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
-              {t === 'compartido' ? 'Compartido' : t === 'privadas' ? 'Notas privadas' : t === 'interconsultas' ? 'Interconsultas' : 'Cuestionario'}
+              {label}
             </button>
           ))}
         </div>
@@ -194,14 +229,16 @@ function ExpedienteView({ pacienteId }: { pacienteId: string }) {
 
       {isLoading ? (
         <p className="p-6 text-sm text-slate-500">Cargando expediente…</p>
-      ) : tab === 'compartido' ? (
+      ) : tabActual === 'compartido' ? (
         <HistorialCompartido pacienteId={pacienteId} registros={expediente?.historial ?? []} role={role} />
-      ) : tab === 'privadas' ? (
+      ) : tabActual === 'privadas' ? (
         <NotasPrivadas pacienteId={pacienteId} role={role} />
-      ) : tab === 'interconsultas' ? (
+      ) : tabActual === 'interconsultas' ? (
         <InterconsultasView pacienteId={pacienteId} interconsultas={expediente?.interconsultas ?? []} role={role} />
-      ) : (
+      ) : tabActual === 'cuestionario' ? (
         <CuestionarioExpediente pacienteId={pacienteId} />
+      ) : (
+        <ResultadosLaboratorio resultados={expediente?.resultados_laboratorio ?? []} />
       )}
     </div>
   )
@@ -761,6 +798,66 @@ function ResponderModal({ id, onClose, onSaved }: { id: string; onClose: () => v
       </div>
     </div>
   )
+}
+
+function ResultadosLaboratorio({ resultados }: { resultados: ResultadoLaboratorio[] }) {
+  if (resultados.length === 0) {
+    return (
+      <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+        El paciente no tiene exámenes de laboratorio registrados.
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {resultados.map((s) => (
+        <div key={s.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-bold text-slate-800">Solicitud de exámenes</p>
+              <p className="text-xs text-slate-400">{new Date(s.fecha).toLocaleString()}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_RESULTADO_STYLE[s.estado] ?? 'bg-slate-200 text-slate-600'}`}>
+                {s.estado.replace('_', ' ')}
+              </span>
+              {s.cobrado && <span className="text-xs text-green-600">pagada</span>}
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {s.lineas.map((l) => (
+              <div key={l.id} className="rounded-lg border border-slate-100 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-slate-800">{l.examen}</span>
+                  {l.resultado && (
+                    <span className="text-[10px] text-slate-400">
+                      {l.resultado.procesado_at ? new Date(l.resultado.procesado_at).toLocaleString() : ''}
+                    </span>
+                  )}
+                </div>
+                {l.resultado ? (
+                  <p className="mt-1 text-sm text-slate-700">
+                    Resultado: {l.resultado.valores ? JSON.stringify(l.resultado.valores) : '—'}
+                    {l.resultado.observaciones && <span className="text-slate-500"> · {l.resultado.observaciones}</span>}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-400">Sin resultado.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const ESTADO_RESULTADO_STYLE: Record<string, string> = {
+  pendiente: 'bg-blue-100 text-blue-700',
+  en_proceso: 'bg-amber-100 text-amber-700',
+  listo: 'bg-green-100 text-green-700',
+  entregado: 'bg-slate-200 text-slate-600',
 }
 
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100'

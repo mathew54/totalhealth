@@ -17,7 +17,9 @@ export const diagnosticoSchema = z.object({
 
 export const consultasQuery = z.object({
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha en formato YYYY-MM-DD').optional(),
+  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha en formato YYYY-MM-DD').optional(),
+  hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha en formato YYYY-MM-DD').optional(),
   medico_id: z.string().uuid().optional(),
   estado: z.enum(['programada', 'en_curso', 'completada', 'cancelada']).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
+  limit: z.coerce.number().int().min(1).max(500).default(500),
 });

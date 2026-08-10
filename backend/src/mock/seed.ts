@@ -32,6 +32,12 @@ const future = (d: number, h = 10) => {
 
 const todayISO = () => fechaHoyCaracas()
 
+// Hoy a las h:30 en hora de Caracas (UTC-4), como ISO datetime completo.
+const hoyA = (h: number) => {
+  const [y, m, d] = todayISO().split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d, h + 4, 30, 0, 0)).toISOString()
+}
+
 export const SEED: Record<string, Row[]> = {
   app_config: [
     {
@@ -106,11 +112,11 @@ export const SEED: Record<string, Row[]> = {
     { id: '30000000-0000-0000-0000-000000000004', paciente_id: '20000000-0000-0000-0000-000000000004', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_hora: future(1, 9), motivo: 'Primera consulta', diagnostico: null, notas: null, estado: 'programada', origen: 'online', created_at: dayAgo(0), updated_at: dayAgo(0) },
     { id: '30000000-0000-0000-0000-000000000005', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_hora: future(3, 11), motivo: 'Control anual', diagnostico: null, notas: null, estado: 'programada', origen: 'online', created_at: dayAgo(0), updated_at: dayAgo(0) },
     // Consulta en curso con la Dra. Suárez (cardiología).
-    { id: '30000000-0000-0000-0000-000000000006', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[5].id, clinica_id: CLINICA_ID, fecha_hora: todayISO(), motivo: 'Evaluación cardiovascular', diagnostico: null, notas: 'Revisar palpitaciones', estado: 'en_curso', origen: 'staff', created_at: dayAgo(0), updated_at: dayAgo(0) },
+    { id: '30000000-0000-0000-0000-000000000006', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[5].id, clinica_id: CLINICA_ID, fecha_hora: hoyA(9), motivo: 'Evaluación cardiovascular', diagnostico: null, notas: 'Revisar palpitaciones', estado: 'en_curso', origen: 'staff', created_at: dayAgo(0), updated_at: dayAgo(0) },
     // Consulta cancelada.
     { id: '30000000-0000-0000-0000-000000000007', paciente_id: '20000000-0000-0000-0000-000000000003', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_hora: dayAgo(1, 14), motivo: 'Revisión de exámenes', diagnostico: null, notas: 'Paciente canceló por traslado', estado: 'cancelada', origen: 'staff', created_at: dayAgo(3), updated_at: dayAgo(1) },
     // Consulta programada de paciente crónico (turno asociado en sala de espera).
-    { id: '30000000-0000-0000-0000-000000000008', paciente_id: '20000000-0000-0000-0000-000000000012', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_hora: todayISO(), motivo: 'Control de presión arterial', diagnostico: null, notas: null, estado: 'programada', origen: 'staff', created_at: dayAgo(0), updated_at: dayAgo(0) },
+    { id: '30000000-0000-0000-0000-000000000008', paciente_id: '20000000-0000-0000-0000-000000000012', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_hora: hoyA(10), motivo: 'Control de presión arterial', diagnostico: null, notas: null, estado: 'programada', origen: 'staff', created_at: dayAgo(0), updated_at: dayAgo(0) },
     // Consulta con el Dr. Ramírez (traumatología) completada.
     { id: '30000000-0000-0000-0000-000000000009', paciente_id: '20000000-0000-0000-0000-000000000008', medico_id: AUTH_USERS[6].id, clinica_id: CLINICA_ID, fecha_hora: dayAgo(6, 10), motivo: 'Dolor de rodilla', diagnostico: 'Gonalgia por desgaste meniscal', notas: 'Reposo relativo y fisioterapia', estado: 'completada', origen: 'staff', created_at: dayAgo(6), updated_at: dayAgo(5) },
     // Consulta programada con la Dra. Suárez para paciente crónico.
@@ -264,6 +270,8 @@ export const SEED: Record<string, Row[]> = {
     { id: '95000000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, consulta_id: null, paciente_id: '20000000-0000-0000-0000-000000000008', numero: 5, fecha: todayISO(), estado: 'cancelado', prioridad: 'normal', creado_por: AUTH_USERS[4].id, hora_creado: dayAgo(0), hora_llamado: null, hora_atendido: null },
     // Turno en espera con prioridad urgente.
     { id: '95000000-0000-0000-0000-000000000006', clinica_id: CLINICA_ID, consulta_id: null, paciente_id: '20000000-0000-0000-0000-000000000012', numero: 6, fecha: todayISO(), estado: 'esperando', prioridad: 'urgente', creado_por: AUTH_USERS[4].id, hora_creado: dayAgo(0), hora_llamado: null, hora_atendido: null },
+    // Turno vinculado a la consulta programada de hoy (retroalimentación agenda).
+    { id: '95000000-0000-0000-0000-000000000007', clinica_id: CLINICA_ID, consulta_id: '30000000-0000-0000-0000-000000000008', paciente_id: '20000000-0000-0000-0000-000000000012', numero: 7, fecha: todayISO(), estado: 'esperando', prioridad: 'normal', creado_por: AUTH_USERS[4].id, hora_creado: dayAgo(0), hora_llamado: null, hora_atendido: null },
   ],
 
   disponibilidad_medico: [

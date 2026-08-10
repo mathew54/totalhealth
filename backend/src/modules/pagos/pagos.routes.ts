@@ -62,6 +62,7 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       .single();
     if (sErr || !solicitud) return next(notFound('Solicitud no encontrada'));
     if (solicitud.cobrado) return next(conflict('Esta solicitud ya fue cobrada'));
+    if (solicitud.estado === 'anulada') return next(conflict('La solicitud está anulada y no puede cobrarse'));
 
     const { data: lineas } = await getSupabase()
       .from('solicitudes_detalle')

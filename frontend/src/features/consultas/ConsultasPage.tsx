@@ -1,20 +1,35 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, getApiError } from '../../lib/api'
 import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd } from '../../lib/moneda'
 
+type Vista = 'dia' | 'semana' | 'mes'
+
+interface TurnoAgenda {
+  id: string
+  numero: number
+  estado: 'esperando' | 'llamado' | 'atendido' | 'saltado' | 'cancelado'
+  prioridad: 'normal' | 'prioridad' | 'urgente'
+}
+
 interface Consulta {
   id: string
   paciente_id: string
   medico_id: string
+  clinica_id: string
   fecha_hora: string
   motivo: string | null
   diagnostico: string | null
   notas: string | null
   estado: string
+  origen: string | null
+  paciente?: { id: string; cedula: string; nombre_completo: string } | null
+  medico?: { id: string; nombre_completo: string; especialidad: string | null; categoria_medica: string | null } | null
+  turno?: TurnoAgenda | null
 }
 
 interface Paciente {
@@ -30,21 +45,153 @@ interface Medico {
   categoria_medica: string | null
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+interface Grupo {
+  especialidad: string
+  medico: Consulta['medico']
+  citas: Consulta[]
+}
+
+const DIAS = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+
+const TURNO_ESTILO: Record<string, { cls: string; texto: string }> = {
+  esperando: { cls: 'bg-blue-100 text-blue-700', texto: 'En cola' },
+  llamado: { cls: 'bg-amber-100 text-amber-700', texto: 'Llamado' },
+  atendido: { cls: 'bg-green-100 text-green-700', texto: 'Atendido' },
+  saltado: { cls: 'bg-slate-200 text-slate-600', texto: 'Saltado' },
+  cancelado: { cls: 'bg-red-100 text-red-600', texto: 'Cancelado' },
+}
+
+function toKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function fromKey(key: string): Date {
+  const [y, m, d] = key.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function addDays(d: Date, n: number): Date {
+  const nd = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  nd.setDate(nd.getDate() + n)
+  return nd
+}
+
+function startOfWeek(d: Date): Date {
+  const nd = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  return addDays(nd, -((nd.getDay() + 6) % 7))
+}
+
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1)
+}
+
+function endOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0)
+}
+
+function monthGrid(anchor: Date): (string | null)[] {
+  const start = startOfWeek(startOfMonth(anchor))
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = addDays(start, i)
+    return d.getMonth() === anchor.getMonth() ? toKey(d) : null
+  })
+}
+
+const hoyKey = () => toKey(new Date())
+
+const horaDe = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+const diaDe = (iso: string) => iso.slice(0, 10)
+
+const turnoTexto = (t: TurnoAgenda) =>
+  `#${t.numero} ${TURNO_ESTILO[t.estado]?.texto ?? t.estado}`
+
+function agrupar(consultas: Consulta[]): Grupo[] {
+  const idx = new Map<string, Grupo>()
+  for (const c of consultas) {
+    const esp = c.medico?.especialidad ?? 'Sin especialidad'
+    const mid = c.medico?.id ?? '__sin_medico__'
+    const key = `${esp}\u0000${mid}`
+    let g = idx.get(key)
+    if (!g) {
+      g = { especialidad: esp, medico: c.medico ?? null, citas: [] }
+      idx.set(key, g)
+    }
+    g.citas.push(c)
+  }
+  const grupos = [...idx.values()]
+  for (const g of grupos) g.citas.sort((a, b) => a.fecha_hora.localeCompare(b.fecha_hora))
+  grupos.sort(
+    (a, b) =>
+      a.especialidad.localeCompare(b.especialidad) ||
+      (a.medico?.nombre_completo ?? '~').localeCompare(b.medico?.nombre_completo ?? '~'),
+  )
+  return grupos
+}
+
+function porEspecialidad(grupos: Grupo[]): [string, Grupo[]][] {
+  const m = new Map<string, Grupo[]>()
+  for (const g of grupos) {
+    if (!m.has(g.especialidad)) m.set(g.especialidad, [])
+    m.get(g.especialidad)!.push(g)
+  }
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+}
 
 export default function ConsultasPage() {
   const queryClient = useQueryClient()
   const profile = useSessionStore((s) => s.profile)
   const role = profile?.role ?? 'secretaria'
 
-  const [fecha, setFecha] = useState(today())
+  const [vista, setVista] = useState<Vista>('dia')
+  const [anchor, setAnchor] = useState<Date>(() => new Date())
+  const [estado, setEstado] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [detalleId, setDetalleId] = useState<string | null>(null)
+  const [detalleCita, setDetalleCita] = useState<Consulta | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const rango = useMemo(() => {
+    if (vista === 'dia') {
+      const f = toKey(anchor)
+      return { fecha: f, desde: f, hasta: f, dias: [f] as string[] }
+    }
+    if (vista === 'semana') {
+      const lunes = startOfWeek(anchor)
+      const dias = Array.from({ length: 7 }, (_, i) => toKey(addDays(lunes, i)))
+      return { fecha: undefined as string | undefined, desde: dias[0], hasta: dias[6], dias }
+    }
+    return {
+      fecha: undefined as string | undefined,
+      desde: toKey(startOfMonth(anchor)),
+      hasta: toKey(endOfMonth(anchor)),
+      dias: [] as string[],
+    }
+  }, [vista, anchor])
+
+  const titulo = useMemo(() => {
+    if (vista === 'dia')
+      return anchor.toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    if (vista === 'semana') {
+      const l = startOfWeek(anchor)
+      const d = addDays(l, 6)
+      return `${l.toLocaleDateString('es-VE', { day: 'numeric', month: 'short' })} – ${d.toLocaleDateString('es-VE', { day: 'numeric', month: 'short', year: 'numeric' })}`
+    }
+    return anchor.toLocaleDateString('es-VE', { month: 'long', year: 'numeric' })
+  }, [vista, anchor])
+
+  const params = rango.fecha
+    ? { fecha: rango.fecha, ...(estado ? { estado } : {}) }
+    : { desde: rango.desde, hasta: rango.hasta, ...(estado ? { estado } : {}) }
+
   const { data: consultas = [], isLoading } = useQuery<Consulta[]>({
-    queryKey: ['consultas', fecha],
-    queryFn: async () => (await api.get('/consultas', { params: { fecha } })).data,
+    queryKey: ['consultas', 'agenda', vista, rango.desde, rango.hasta, estado],
+    queryFn: async () => (await api.get('/consultas', { params })).data,
+    refetchInterval: 15000,
   })
 
   const { data: medicos = [] } = useQuery<Medico[]>({
@@ -57,6 +204,7 @@ export default function ConsultasPage() {
     mutationFn: (payload: unknown) => api.post('/consultas', payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['consultas'] })
+      queryClient.invalidateQueries({ queryKey: ['turnos'] })
       setShowForm(false)
       setError(null)
     },
@@ -74,13 +222,40 @@ export default function ConsultasPage() {
     })
   }
 
+  function navegar(dir: -1 | 1) {
+    setAnchor((a) => {
+      if (vista === 'dia') return addDays(a, dir)
+      if (vista === 'semana') return addDays(a, dir * 7)
+      return new Date(a.getFullYear(), a.getMonth() + dir, 1)
+    })
+  }
+
+  const visibles = useMemo(
+    () =>
+      consultas.filter((c) => {
+        if (estado) return c.estado === estado
+        return c.estado !== 'completada' && c.estado !== 'cancelada'
+      }),
+    [consultas, estado],
+  )
+
+  const hoy = hoyKey()
+  const esHoy = rango.fecha ? rango.fecha === hoy : rango.desde <= hoy && hoy <= rango.hasta
+
+  function abrirCita(c: Consulta) {
+    setDetalleCita(c)
+    setDetalleId(c.id)
+  }
+
   return (
     <div className="space-y-5">
       <PrintHeader />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Agenda de consultas</h1>
-          <p className="text-sm text-slate-500">{role === 'medico' ? 'Tus consultas' : 'Consultas de la clínica'}</p>
+          <h1 className="text-xl font-bold text-slate-800">Agenda</h1>
+          <p className="text-sm text-slate-500">
+            Pacientes en cola por especialidad y médico · <span className="capitalize">{titulo}</span>
+          </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
@@ -90,13 +265,58 @@ export default function ConsultasPage() {
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <input
-          type="date"
-          value={fecha}
-          onChange={(e) => setFecha(e.target.value)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-sm">
+          {(['dia', 'semana', 'mes'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setVista(v)}
+              className={`rounded-md px-3 py-1.5 font-medium capitalize transition ${
+                vista === v ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => navegar(-1)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            aria-label="Anterior"
+          >
+            ‹
+          </button>
+          <button
+            onClick={() => setAnchor(new Date())}
+            disabled={esHoy}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+          >
+            Hoy
+          </button>
+          <button
+            onClick={() => navegar(1)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            aria-label="Siguiente"
+          >
+            ›
+          </button>
+        </div>
+
+        <span className="min-w-0 text-sm font-medium capitalize text-slate-600">{titulo}</span>
+
+        <select
+          value={estado}
+          onChange={(e) => setEstado(e.target.value)}
+          className="w-auto rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500"
+        >
+          <option value="">Por atender</option>
+          <option value="programada">Programadas</option>
+          <option value="en_curso">En curso</option>
+          <option value="completada">Completadas</option>
+          <option value="cancelada">Canceladas</option>
+        </select>
       </div>
 
       {showForm && (
@@ -106,39 +326,214 @@ export default function ConsultasPage() {
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         {isLoading ? (
           <p className="p-6 text-sm text-slate-500">Cargando…</p>
-        ) : consultas.length === 0 ? (
-          <p className="p-6 text-sm text-slate-500">No hay consultas para esta fecha.</p>
+        ) : visibles.length === 0 ? (
+          <p className="p-6 text-sm text-slate-500">No hay consultas por atender en este rango.</p>
+        ) : vista === 'dia' ? (
+          <VistaDia consultas={visibles} onAbrir={abrirCita} />
+        ) : vista === 'semana' ? (
+          <VistaSemana consultas={visibles} dias={rango.dias} onAbrir={abrirCita} />
         ) : (
-          <div className="grid divide-y divide-slate-100 sm:grid-cols-2 lg:grid-cols-3 sm:divide-y-0 sm:gap-4 sm:p-4">
-            {consultas.map((c) => (
-              <ConsultaCard
-                key={c.id}
-                consulta={c}
-                isMine={role === 'medico' && c.medico_id === profile?.id}
-                onClick={() => setDetalleId(c.id)}
-              />
-            ))}
-          </div>
+          <VistaMes
+            consultas={visibles}
+            anchor={anchor}
+            onIrDia={(key) => {
+              setAnchor(fromKey(key))
+              setVista('dia')
+            }}
+          />
         )}
       </div>
 
-      {detalleId && <DetalleModal consultaId={detalleId} onClose={() => setDetalleId(null)} />}
+      {detalleId && (
+        <DetalleModal
+          consultaId={detalleId}
+          initial={detalleCita}
+          onClose={() => {
+            setDetalleId(null)
+            setDetalleCita(null)
+          }}
+        />
+      )}
     </div>
   )
 }
 
-function ConsultaCard({ consulta, isMine, onClick }: { consulta: Consulta; isMine: boolean; onClick: () => void }) {
+function VistaDia({ consultas, onAbrir }: { consultas: Consulta[]; onAbrir: (c: Consulta) => void }) {
+  const esp = useMemo(() => porEspecialidad(agrupar(consultas)), [consultas])
+  if (esp.length === 0) return <EmptyAgenda />
   return (
-    <button onClick={onClick} className="text-left p-4 sm:rounded-xl sm:border sm:border-slate-200 hover:border-slate-300 hover:bg-slate-50">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-slate-800">{new Date(consulta.fecha_hora).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-        <EstadoBadge estado={consulta.estado} />
+    <div className="space-y-6 p-4 sm:p-6">
+      {esp.map(([especialidad, grupos]) => (
+        <section key={especialidad}>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{especialidad}</h2>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {grupos.map((g) => (
+              <div key={g.medico?.id ?? '__sin__'} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-slate-800">{g.medico?.nombre_completo ?? 'Por asignar'}</p>
+                    <p className="text-xs text-slate-500">
+                      {g.citas.length} {g.citas.length === 1 ? 'cita' : 'citas'}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {g.citas.map((c) => (
+                    <CitaRow key={c.id} c={c} onAbrir={() => onAbrir(c)} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function CitaRow({ c, onAbrir }: { c: Consulta; onAbrir: () => void }) {
+  return (
+    <button
+      onClick={onAbrir}
+      className="w-full rounded-xl border border-slate-200 p-3 text-left transition hover:border-brand-400 hover:bg-brand-50/40"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-brand-700">{horaDe(c.fecha_hora)}</span>
+        <TurnoBadge turno={c.turno ?? null} />
       </div>
-      <p className="mt-1 text-sm font-medium text-slate-700">{consulta.motivo ?? 'Sin motivo'}</p>
-      {isMine && <p className="mt-1 text-xs text-brand-600">Tu consulta</p>}
-      {consulta.diagnostico && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{consulta.diagnostico}</p>}
+      <p className="mt-1 truncate text-sm font-medium text-slate-800">{c.paciente?.nombre_completo ?? 'Paciente'}</p>
+      <p className="truncate text-xs text-slate-400">
+        {c.paciente?.cedula ?? ''}
+        {c.motivo ? ` · ${c.motivo}` : ''}
+      </p>
     </button>
   )
+}
+
+function VistaSemana({ consultas, dias, onAbrir }: { consultas: Consulta[]; dias: string[]; onAbrir: (c: Consulta) => void }) {
+  const esp = useMemo(() => porEspecialidad(agrupar(consultas)), [consultas])
+  if (esp.length === 0) return <EmptyAgenda />
+  return (
+    <div className="space-y-6 p-4 sm:p-6">
+      {esp.map(([especialidad, grupos]) => (
+        <section key={especialidad}>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{especialidad}</h2>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="min-w-[680px]">
+              <div className="grid grid-cols-[160px_repeat(7,1fr)] gap-px bg-slate-100">
+                <div className="bg-white p-2 text-xs font-semibold text-slate-400">Médico</div>
+                {dias.map((d) => (
+                  <div key={d} className="bg-white p-2 text-center text-xs font-semibold text-slate-600">
+                    {fromKey(d).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' })}
+                  </div>
+                ))}
+                {grupos.map((g) => (
+                  <Fragment key={g.medico?.id ?? '__sin__'}>
+                    <div className="bg-white p-2 text-sm font-semibold text-slate-700">
+                      {g.medico?.nombre_completo ?? 'Por asignar'}
+                    </div>
+                    {dias.map((d) => (
+                      <div key={d} className="min-h-[72px] space-y-1 bg-white p-1.5">
+                        {g.citas
+                          .filter((c) => diaDe(c.fecha_hora) === d)
+                          .map((c) => (
+                            <CitaMini key={c.id} c={c} onAbrir={() => onAbrir(c)} />
+                          ))}
+                      </div>
+                    ))}
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function CitaMini({ c, onAbrir }: { c: Consulta; onAbrir: () => void }) {
+  return (
+    <button
+      onClick={onAbrir}
+      title={`${horaDe(c.fecha_hora)} · ${c.paciente?.nombre_completo ?? 'Paciente'}`}
+      className="block w-full rounded-md border border-slate-200 px-1.5 py-1 text-left transition hover:border-brand-400 hover:bg-brand-50/40"
+    >
+      <p className="text-[11px] font-semibold text-brand-700">{horaDe(c.fecha_hora)}</p>
+      <p className="truncate text-[11px] text-slate-700">{c.paciente?.nombre_completo ?? 'Paciente'}</p>
+      {c.turno && <p className="text-[10px] text-slate-400">{turnoTexto(c.turno)}</p>}
+    </button>
+  )
+}
+
+function VistaMes({ consultas, anchor, onIrDia }: { consultas: Consulta[]; anchor: Date; onIrDia: (key: string) => void }) {
+  const grid = useMemo(() => monthGrid(anchor), [anchor])
+  const porDia = useMemo(() => {
+    const m = new Map<string, { total: number; porEsp: Map<string, number> }>()
+    for (const c of consultas) {
+      const key = diaDe(c.fecha_hora)
+      if (!m.has(key)) m.set(key, { total: 0, porEsp: new Map() })
+      const cell = m.get(key)!
+      cell.total++
+      const esp = c.medico?.especialidad ?? 'Sin esp.'
+      cell.porEsp.set(esp, (cell.porEsp.get(esp) ?? 0) + 1)
+    }
+    return m
+  }, [consultas])
+  const hoy = hoyKey()
+
+  return (
+    <div className="p-4 sm:p-6">
+      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+        {DIAS.map((d) => (
+          <div key={d} className="bg-slate-50 p-2 text-center text-xs font-semibold uppercase text-slate-500">
+            {d}
+          </div>
+        ))}
+        {grid.map((key, i) => {
+          if (!key) return <div key={`v${i}`} className="min-h-[96px] bg-slate-50/60 p-2" />
+          const cell = porDia.get(key)
+          const esHoy = key === hoy
+          return (
+            <button
+              key={key}
+              onClick={() => onIrDia(key)}
+              className="flex min-h-[96px] flex-col items-stretch gap-1 bg-white p-2 text-left transition hover:bg-brand-50/40"
+            >
+              <span
+                className={`text-xs font-semibold ${
+                  esHoy ? 'flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-white' : 'text-slate-600'
+                }`}
+              >
+                {Number(key.slice(8))}
+              </span>
+              {cell &&
+                [...cell.porEsp.entries()].slice(0, 2).map(([esp, n]) => (
+                  <span key={esp} className="truncate rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">
+                    {esp} · {n}
+                  </span>
+                ))}
+              {cell && cell.total > 2 && (
+                <span className="text-[10px] text-slate-400">+{cell.total - 2} más</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function EmptyAgenda() {
+  return (
+    <p className="p-6 text-center text-sm text-slate-400">No hay consultas que mostrar en este rango.</p>
+  )
+}
+
+function TurnoBadge({ turno }: { turno: TurnoAgenda | null }) {
+  if (!turno) return null
+  const e = TURNO_ESTILO[turno.estado] ?? TURNO_ESTILO.esperando
+  return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${e.cls}`}>{turnoTexto(turno)}</span>
 }
 
 function PacientePicker({ onSubmit, medicos, role, error, submitting }: {
@@ -215,7 +610,7 @@ function PacientePicker({ onSubmit, medicos, role, error, submitting }: {
             </Field>
           </>
         )}
-        <Field label="Fecha *"><input name="fecha" type="date" required defaultValue={today()} className={inputCls} /></Field>
+        <Field label="Fecha *"><input name="fecha" type="date" required defaultValue={toKey(new Date())} className={inputCls} /></Field>
         <Field label="Hora"><input name="hora" type="time" defaultValue="09:00" className={inputCls} /></Field>
         <Field label="Motivo"><input name="motivo" className={inputCls} /></Field>
       </div>
@@ -230,9 +625,10 @@ function PacientePicker({ onSubmit, medicos, role, error, submitting }: {
   )
 }
 
-function DetalleModal({ consultaId, onClose }: { consultaId: string; onClose: () => void }) {
+function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; initial: Consulta | null; onClose: () => void }) {
   const queryClient = useQueryClient()
   const profile = useSessionStore((s) => s.profile)
+  const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [showSolicitud, setShowSolicitud] = useState(false)
 
@@ -245,6 +641,8 @@ function DetalleModal({ consultaId, onClose }: { consultaId: string; onClose: ()
     queryKey: ['consulta', consultaId, 'historial'],
     queryFn: async () => (await api.get(`/consultas/${consultaId}/historial`)).data,
   })
+
+  const base = useMemo(() => (initial ? { ...initial, ...(consulta ?? {}) } : consulta ?? initial), [consulta, initial])
 
   const setDiagnostico = useMutation({
     mutationFn: (payload: unknown) => api.patch(`/consultas/${consultaId}/diagnostico`, payload),
@@ -262,32 +660,57 @@ function DetalleModal({ consultaId, onClose }: { consultaId: string; onClose: ()
     setDiagnostico.mutate({ diagnostico: fd.get('diagnostico'), notas: fd.get('notas') || undefined })
   }
 
-  const esMedicoAutor = profile?.role === 'medico' && consulta?.medico_id === profile.id
+  const esMedicoAutor = profile?.role === 'medico' && base?.medico_id === profile.id
+  const puedeSala = profile?.role === 'secretaria' || profile?.role === 'admin' || profile?.role === 'super_root'
+
+  function irSalaEspera() {
+    onClose()
+    navigate(`/turnos${base ? `?consulta=${encodeURIComponent(base.id)}` : ''}`)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-6 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">{consulta?.paciente?.nombre_completo ?? '…'}</h3>
-            <p className="text-sm text-slate-500">{consulta?.paciente?.cedula}</p>
+            <h3 className="text-lg font-bold text-slate-800">{base?.paciente?.nombre_completo ?? '…'}</h3>
+            <p className="text-sm text-slate-500">{base?.paciente?.cedula}</p>
           </div>
           <button onClick={onClose} className="text-xl text-slate-400 hover:text-slate-600">×</button>
         </div>
 
-        {isLoading ? (
+        {isLoading && !base ? (
           <p className="mt-4 text-sm text-slate-500">Cargando…</p>
-        ) : (
+        ) : base ? (
           <>
             <div className="mt-4 rounded-lg border border-slate-200 p-3 text-sm">
-              <p className="text-slate-500">{consulta ? new Date(consulta.fecha_hora).toLocaleString() : ''} · <EstadoBadge estado={consulta!.estado} /></p>
-              <p className="mt-1 text-slate-700">{consulta!.motivo ?? 'Sin motivo'}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-800">{new Date(base.fecha_hora).toLocaleString()}</span>
+                <EstadoBadge estado={base.estado} />
+                {base.turno && <TurnoBadge turno={base.turno} />}
+              </div>
+              {base.medico && (
+                <p className="mt-1 text-slate-600">
+                  <span className="font-medium text-slate-800">{base.medico.nombre_completo}</span>
+                  {base.medico.especialidad && <span className="text-slate-400"> · {base.medico.especialidad}</span>}
+                </p>
+              )}
+              <p className="mt-1 text-slate-700">{base.motivo ?? 'Sin motivo'}</p>
             </div>
 
-            {esMedicoAutor && consulta!.estado !== 'cancelada' && (
+            {puedeSala && (
+              <button
+                onClick={irSalaEspera}
+                className="mt-3 w-full rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                Ir a la sala de espera
+              </button>
+            )}
+
+            {esMedicoAutor && base.estado !== 'cancelada' && (
               <button
                 onClick={() => setShowSolicitud(true)}
-                className="mt-3 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
               >
                 Solicitar exámenes de laboratorio
               </button>
@@ -295,8 +718,8 @@ function DetalleModal({ consultaId, onClose }: { consultaId: string; onClose: ()
 
             <div className="mt-4">
               <h4 className="mb-1 text-sm font-semibold text-slate-700">Diagnóstico</h4>
-              {consulta?.diagnostico ? (
-                <p className="rounded-lg bg-green-50 p-3 text-sm text-slate-700">{consulta.diagnostico}</p>
+              {base.diagnostico ? (
+                <p className="rounded-lg bg-green-50 p-3 text-sm text-slate-700">{base.diagnostico}</p>
               ) : esMedicoAutor ? (
                 <form onSubmit={handleDiag} className="space-y-2">
                   <textarea name="diagnostico" required placeholder="Diagnóstico…" rows={2} className={inputCls} />
@@ -324,13 +747,15 @@ function DetalleModal({ consultaId, onClose }: { consultaId: string; onClose: ()
               </div>
             </div>
           </>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">No se pudo cargar la consulta.</p>
         )}
       </div>
 
-      {showSolicitud && consulta && (
+      {showSolicitud && base && (
         <SolicitarExamenes
-          consultaId={consulta.id}
-          pacienteId={consulta.paciente_id}
+          consultaId={base.id}
+          pacienteId={base.paciente_id}
           onClose={() => setShowSolicitud(false)}
         />
       )}

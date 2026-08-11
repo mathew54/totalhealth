@@ -33,7 +33,12 @@ let instance: MessagingProvider | null = null;
 
 export function getMessagingProvider(): MessagingProvider {
   if (!instance) {
-    instance = env.messagingProvider === 'smtp' && env.smtpEnabled ? new SmtpProvider() : new MockProvider();
+    instance =
+      env.messagingProvider === 'whatsapp'
+        ? new WhatsAppProvider()
+        : env.messagingProvider === 'smtp' && env.smtpEnabled
+          ? new SmtpProvider()
+          : new MockProvider();
   }
   return instance;
 }
@@ -59,5 +64,30 @@ class SmtpProvider implements MessagingProvider {
 
   async sendNotify(): Promise<SendMessageResult> {
     return this.unsupported();
+  }
+}
+
+/**
+ * Proveedor WhatsApp real (Baileys). Envía mensajes al teléfono del paciente a
+ * través del dispositivo de la clínica vinculado en Administración → Configuración.
+ * Si el dispositivo no está vinculado, se lanza un error claro (no silencia).
+ */
+class WhatsAppProvider implements MessagingProvider {
+  name = 'whatsapp';
+
+  private readonly whatsapp = () => import('./whatsappService.js');
+
+  async sendOtp(opts: { destino: string; codigo: string; canal: 'sms' | 'whatsapp' | 'email' }): Promise<SendMessageResult> {
+    if (opts.canal === 'email') return new MockProvider().sendOtp({ ...opts });
+    const { enviarWhatsApp } = await this.whatsapp();
+    const { id, remoto } = await enviarWhatsApp(opts.destino, `TotalHealth: tu código de verificación es ${opts.codigo}`);
+    return { provider: 'whatsapp', reference: id, devContent: opts.canal === 'sms' ? opts.codigo : undefined };
+  }
+
+  async sendNotify(opts: { destino: string; canal: 'push' | 'sms' | 'whatsapp' | 'email'; mensaje: string }): Promise<SendMessageResult> {
+    if (opts.canal === 'email') return new MockProvider().sendNotify({ ...opts });
+    const { enviarWhatsApp } = await this.whatsapp();
+    const { id } = await enviarWhatsApp(opts.destino, opts.mensaje);
+    return { provider: 'whatsapp', reference: id, devContent: opts.canal === 'push' ? opts.mensaje : undefined };
   }
 }

@@ -11,5 +11,8 @@ supabase/.temp/
 # Local Netlify folder
 .netlify
 
+# Sesión de WhatsApp (Baileys) — credenciales del dispositivo vinculado
+.wa-session/
+
 # Credenciales de despliegue (NO subir)
 DEPLOY_CREDENCIALES.md

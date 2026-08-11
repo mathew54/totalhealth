@@ -3,6 +3,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import { headerTextColor, useConfigStore } from '../../lib/configStore'
 import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
+import { WhatsAppConfig } from './WhatsAppConfig'
 import type { Profile } from '../../lib/rbac'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd, usdABs, formatearBs } from '../../lib/moneda'
@@ -1018,6 +1019,8 @@ function ConfigTab() {
           {telefono && <p className="text-xs opacity-80">Tel: {telefono}</p>}
         </div>
       </div>
+
+      <WhatsAppConfig />
 
       <Errtag>{error}</Errtag>
       {mensaje && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{mensaje}</p>}

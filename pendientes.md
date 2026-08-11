@@ -4,6 +4,73 @@ Brechas detectadas al comparar el estado construido con **`propuesta.md`**.
 El núcleo (SPEC M1–M4: auth/RBAC, pacientes, consultas, solicitudes, resultados,
 pagos de caja, portal OTP) ya está funcional. Este archivo recoge lo que falta.
 
+## Nuevo desarrollo — WhatsApp real (Baileys) como método de mensajería
+
+- [x] **WhatsApp como método de mensajería real del backend (Baileys) + módulo de**
+  vinculación en Administración → Configuración.
+  1. **Servicio** `services/whatsappService.ts`: singleton con sesión persistente
+     `useMultiFileAuthState` en `.wa-session/` (gitignored). Expone estado,
+     generación de **QR** (data URL PNG) y **código de emparejamiento**
+     (`requestPairingCode`), envío de mensajes de texto y desvinculación. Maneja
+     reconexión automática en `515 restartRequired` y logout en `401 loggedOut`.
+     Normaliza teléfonos VE a E.164 sin `+` (código de país configurable,
+     `WHATSAPP_PAIS_CODIGO=58` por defecto).
+  2. **Provider** `messagingProvider.ts`: nuevo `WhatsAppProvider`
+     (`MESSAGING_PROVIDER=whatsapp`). `sendOtp` (canal sms/whatsapp) y
+     `sendNotify` (canales sms/whatsapp/push) despachan por WhatsApp real;
+     los canales email siguen usando mock/ocupan SMTP. Reutilizado por
+     `notifier.ts` (recordatorios/resultados/domicilio) y el OTP del portal.
+  3. **API admin** `modules/whatsapp/whatsapp.routes.ts` (protegida
+     `authRequired` + `role admin/super_root`): `GET /api/admin/whatsapp`
+     (estado), `POST /qr` (QR PNG), `POST /pairing {telefono}` (código de
+     emparejamiento), `POST /test {destino,mensaje}` (envío de prueba) y
+     `POST /logout`. Validación zod de teléfono/mensaje.
+  4. **Frontend** `WhatsAppConfig.tsx` insertado en `ConfigTab` (AdminPage)
+     debajo de "Color del header": estado con badge auto-refresco (5 s),
+     opción "Generar QR" o "Código de emparejamiento" (muestra el código en
+     grande), mensaje de prueba, botón desvincular.
+   5. **Verificado**: backend typecheck/build/72 tests (nuevo
+      `whatsapp.test.ts`: auth, estado, validación de números, normalización
+      VE); frontend typecheck y lint; **envío real** de "Prueba de totalHealth"
+      entregado a +584244458116 vía el servicio integrado (id del mensaje
+      3EB00A4758F35F0BB5ED74) con la sesión del dispositivo vinculado.
+
+## Correcciones al flujo de vinculación (reporte del cliente)
+
+Reporte: al pulsar "Generar QR" nunca aparecía QR escaneable, y el emparejamiento
+fallaba con "comprueba que el número de teléfono es correcto".
+
+Causa raíz: `backend/.wa-session/creds.json` quedó con `me` seteado pero
+`registered: false` (sesión parcial/corrupta de un intento previo). En
+`node_modules/@whiskeysockets/baileys/lib/Socket/socket.js` `validateConnection()`
+(líneas 320-327): si `creds.me` existe, Baileys intenta **LOGIN** en vez de
+**registro** → nunca emite QR. Además, `requestPairingCode` se llamaba antes de
+que el socket estuviera conectado.
+
+- [x] `credsDisco()` + `limpiarSesionParcial()`: detecta sesión parcial
+  (`!registered && me`) y borra `.wa-session/` automáticamente antes de vincular.
+- [x] `iniciarVinculacion()`: cierra el socket anterior (flag
+  `cerradoVoluntariamente`), resetea estado y limpia sesión parcial antes de
+  cada QR/pairing; `desconectarWhatsApp()` también marca `cerradoVoluntariamente`.
+- [x] Guarda de socket obsoleto en `crearSocket()`: el handler de
+  `connection.update` del socket viejo se ignora si `sock !== socketActual`,
+  evitando reconexiones duplicadas tras una nueva vinculación/logout.
+- [x] Registro de listeners ANTES de crear el socket en `obtenerQrWhatsApp` y
+  `solicitarCodigoEmparejamiento`: Baileys emite `connecting` (y el primer QR)
+  durante la creación del socket (`process.nextTick`); esperarlo después
+  producía timeout.
+- [x] `solicitarCodigoEmparejamiento`: espera evento `connecting` + 1.5 s de
+  margen antes de `requestPairingCode`; el código se devuelve en formato
+  `XXXX-XXXX` (con guion), como lo pide WhatsApp.
+- [x] `estadoWhatsApp()`: reporta `conectado` si el disco tiene sesión
+  registrada aunque el socket aún no abra.
+- [x] Frontend `WhatsAppConfig.tsx`: QR más grande (h-52 w-52) con marco, botón
+  "Generando QR…" mientras carga, limpieza de QR/código al conectar,
+  `refetchInterval` 3 s. Eliminada redeclaración de `activo` y `activo2` huérfano.
+- [x] Verificado: QR real (data URL PNG) y código de emparejamiento real
+  (formato `XXXX-XXXX`) generados tras borrar la sesión corrupta; backend
+  typecheck/72 tests OK; frontend typecheck OK.
+
 ## Fase A — Valor inmediato (bajo/medio esfuerzo)
 
 - [x] QR/código seguro para compartir un resultado con un médico externo.

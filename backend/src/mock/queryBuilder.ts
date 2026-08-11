@@ -7,6 +7,14 @@ type Op =
   | { op: 'lte'; col: string; val: unknown }
   | { op: 'in'; col: string; val: unknown[] }
 
+/** Compara dos valores (números o strings) para filtros gte/lte. */
+function compare(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b
+  const sa = String(a)
+  const sb = String(b)
+  return sa < sb ? -1 : sa > sb ? 1 : 0
+}
+
 export class QueryBuilder {
   private filters: Op[] = []
   private orderCol: string | null = null
@@ -61,6 +69,10 @@ export class QueryBuilder {
     this.rangeSlice = [from, to]
     return this
   }
+  limit(n: number) {
+    this.rangeSlice = [0, n - 1]
+    return this
+  }
   single() {
     this.singleMode = true
     return this
@@ -78,9 +90,9 @@ export class QueryBuilder {
         case 'eq':
           return v === f.val || (v == null && f.val == null)
         case 'gte':
-          return v != null && (v as number) >= (f.val as number)
+          return v != null && compare(f.val, v) <= 0
         case 'lte':
-          return v != null && (v as number) <= (f.val as number)
+          return v != null && compare(f.val, v) >= 0
         case 'in':
           return Array.isArray(f.val) && f.val.includes(v)
       }

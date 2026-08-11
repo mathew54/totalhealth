@@ -8,23 +8,17 @@ interface Turno {
   id: string
   estado: string
 }
-interface Consulta {
+interface Notificacion {
   id: string
   estado: string
 }
-interface ReporteCaja {
-  total_usd: number
-  total_bs: number
-  count: number
-}
-interface Notificacion {
+interface Domicilio {
   id: string
   estado: string
 }
 
 const acciones = [
   { label: 'Registrar paciente', to: '/pacientes', descripcion: 'Alta rápida de pacientes' },
-  { label: 'Gestión de turnos', to: '/turnos', descripcion: 'Cola de atención del día' },
   { label: 'Caja y facturación', to: '/pagos', descripcion: 'Cobros y reporte del día' },
   { label: 'Recordatorios', to: '/notificaciones', descripcion: 'Notificaciones a pacientes' },
 ]
@@ -36,21 +30,17 @@ export default function SecretariaDashboard() {
     queryKey: ['turnos', 'resumen'],
     queryFn: async () => (await api.get('/turnos')).data,
   })
-  const { data: consultas = [] } = useQuery<Consulta[]>({
-    queryKey: ['consultas', 'resumen'],
-    queryFn: async () => (await api.get('/consultas?limit=100')).data,
-  })
-  const { data: caja } = useQuery<ReporteCaja>({
-    queryKey: ['pagos', 'resumen'],
-    queryFn: async () => (await api.get('/pagos')).data,
-  })
   const { data: notificaciones = [] } = useQuery<Notificacion[]>({
     queryKey: ['notificaciones', 'resumen'],
     queryFn: async () => (await api.get('/notificaciones')).data,
   })
+  const { data: domicilios = [] } = useQuery<Domicilio[]>({
+    queryKey: ['domicilios', 'resumen'],
+    queryFn: async () => (await api.get('/domicilios')).data,
+  })
 
   const enCola = turnos.filter((t) => t.estado === 'esperando' || t.estado === 'llamado').length
-  const citasHoy = consultas.filter((c) => c.estado === 'programada').length
+  const domiciliosActivos = domicilios.filter((d) => d.estado === 'programada' || d.estado === 'en_ruta').length
   const recordatorios = notificaciones.filter((n) => n.estado === 'pendiente').length
 
   return (
@@ -61,10 +51,9 @@ export default function SecretariaDashboard() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Pacientes en cola" valor={enCola} tono={enCola > 0 ? 'warning' : 'success'} hint="Turnos esperando o llamados" />
-        <StatCard label="Citas programadas" valor={citasHoy} hint="Consultas de hoy" />
-        <StatCard label="Caja del día" valor={caja ? `$${caja.total_usd.toFixed(2)}` : '—'} tono="success" hint={caja ? `Bs ${caja.total_bs.toFixed(2)}` : undefined} />
-        <StatCard label="Recordatorios" valor={recordatorios} tono={recordatorios > 0 ? 'warning' : 'default'} hint="Notificaciones pendientes" />
+        <StatCard label="Pacientes en cola" valor={enCola} tono={enCola > 0 ? 'warning' : 'success'} hint="Turnos esperando o llamados" to="/turnos" />
+        <StatCard label="Domicilios" valor={domiciliosActivos} hint="Programadas / en ruta" to="/domicilios" />
+        <StatCard label="Recordatorios" valor={recordatorios} tono={recordatorios > 0 ? 'warning' : 'default'} hint="Notificaciones pendientes" to="/notificaciones" />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

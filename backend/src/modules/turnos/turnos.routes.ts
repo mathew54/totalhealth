@@ -5,13 +5,15 @@ import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
-import { crearTurnoSchema, idParamSchema, estadoTurnoSchema, turnosQuery } from './turnos.validators.js';
+import { crearTurnoSchema, asignarMedicoSchema, idParamSchema, estadoTurnoSchema, turnosQuery } from './turnos.validators.js';
 import { fechaHoyCaracas } from '../../services/bcv.js';
 
 const router = Router();
 router.use(authRequired, requireRole('secretaria', 'admin', 'super_root'));
 
 const COLS = 'id, clinica_id, paciente_id, consulta_id, numero, fecha, estado, prioridad, creado_por, hora_creado, hora_llamado, hora_atendido';
+
+const DURACION_ATENCION_MIN = 20;
 
 /** Asigna el próximo número del día. */
 async function proximoNumero(clinicaId: string | null, fecha: string): Promise<number> {
@@ -24,6 +26,97 @@ async function proximoNumero(clinicaId: string | null, fecha: string): Promise<n
   return (data?.[0]?.numero as number ?? 0) + 1;
 }
 
+interface ConsultaBasica {
+  id: string;
+  medico_id: string | null;
+  fecha_hora: string;
+}
+
+/**
+ * Calcula la fecha/hora de la próxima consulta creada desde la sala de espera:
+ * hoy (America/Caracas) con una hora posterior al último paciente del día
+ * (última consulta programada o último turno generado) más una duración base.
+ */
+async function proximaFechaHora(clinicaId: string | null): Promise<string> {
+  const fecha = fechaHoyCaracas();
+  const [{ data: citas }, { data: ultimoTurno }] = await Promise.all([
+    getSupabase()
+      .from('consultas')
+      .select('fecha_hora')
+      .gte('fecha_hora', `${fecha}T00:00:00.000Z`)
+      .lte('fecha_hora', `${fecha}T23:59:59.999Z`)
+      .order('fecha_hora', { ascending: false })
+      .limit(1),
+    getSupabase()
+      .from('turnos')
+      .select('hora_creado')
+      .eq('fecha', fecha)
+      .order('numero', { ascending: false })
+      .limit(1),
+  ]);
+
+  const ref = Math.max(
+    citas?.[0]?.fecha_hora ? new Date(citas[0].fecha_hora as string).getTime() : 0,
+    ultimoTurno?.[0]?.hora_creado ? new Date(ultimoTurno[0].hora_creado as string).getTime() : 0,
+    Date.now(),
+  );
+  return new Date(ref + DURACION_ATENCION_MIN * 60_000).toISOString();
+}
+
+/** Enriquece turnos con paciente, médico (de la consulta vinculada) y hora de la cita. */
+async function enriquecerTurnos<T extends { paciente_id: string; consulta_id: string | null }>(turnos: T[]) {
+  const consultaIds = turnos.map((t) => t.consulta_id).filter(Boolean) as string[];
+
+  const [{ data: pacientes }, { data: consultas }] = await Promise.all([
+    getSupabase().from('pacientes').select('id, nombre_completo, cedula'),
+    consultaIds.length
+      ? getSupabase().from('consultas').select('id, medico_id, fecha_hora').in('id', consultaIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const medicoIds = (consultas ?? []).map((c) => c.medico_id as string).filter(Boolean) as string[];
+  const medicosPorId = new Map<string, { nombre_completo: string; especialidad: string | null }>();
+  if (medicoIds.length) {
+    const { data: medicos } = await getSupabase()
+      .from('profiles')
+      .select('id, nombre_completo, especialidad')
+      .in('id', medicoIds);
+    for (const m of medicos ?? []) medicosPorId.set(m.id as string, m as { nombre_completo: string; especialidad: string | null });
+  }
+
+  const consultaPorId = new Map<string, ConsultaBasica>((consultas ?? []).map((c) => [c.id as string, c as ConsultaBasica]));
+  const pacientePorId = new Map((pacientes ?? []).map((p) => [p.id, p]));
+
+  return turnos.map((t) => {
+    const consulta = t.consulta_id ? consultaPorId.get(t.consulta_id) : undefined;
+    return {
+      ...t,
+      paciente: pacientePorId.get(t.paciente_id) ?? null,
+      medico: (consulta?.medico_id ? medicosPorId.get(consulta.medico_id) : undefined) ?? null,
+      hora_cita: consulta?.fecha_hora ?? null,
+    };
+  });
+}
+
+/** Crea una consulta (registro de la sala de espera) con fecha/hora automáticas. */
+async function crearConsultaSalaEspera(pacienteId: string, clinicaId: string | null, medicoId: string | null): Promise<string> {
+  const fechaHora = await proximaFechaHora(clinicaId);
+  const { data, error } = await getSupabase()
+    .from('consultas')
+    .insert({
+      paciente_id: pacienteId,
+      medico_id: medicoId,
+      clinica_id: clinicaId,
+      fecha_hora: fechaHora,
+      estado: 'programada',
+      origen: 'sala_espera',
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id as string;
+}
+
 /**
  * POST /api/turnos
  * Genera un turno para un paciente (colas consistentes).
@@ -33,6 +126,24 @@ router.post('/', validate(crearTurnoSchema), async (req, res, next) => {
     const body = req.body as z.infer<typeof crearTurnoSchema>;
     const user = req.user!;
     const fecha = fechaHoyCaracas();
+
+    let consultaId = body.consulta_id ?? null;
+    if (body.consulta_id) {
+      // Consulta existente: actualizar el médico si viene uno en el turno.
+      if (body.medico_id) {
+        const r = await getSupabase().from('consultas').update({ medico_id: body.medico_id }).eq('id', body.consulta_id);
+        if (r.error) return next(badRequest(r.error.message));
+      }
+    } else if (body.medico_id) {
+      // Nuevo registro desde la sala de espera: se crea la consulta con fecha y
+      // hora automáticas (hoy, posterior al último paciente en cola).
+      try {
+        consultaId = await crearConsultaSalaEspera(body.paciente_id, user.clinicaId, body.medico_id);
+      } catch (err) {
+        return next(badRequest((err as Error).message));
+      }
+    }
+
     const numero = await proximoNumero(user.clinicaId, fecha);
 
     const { data, error } = await getSupabase()
@@ -40,7 +151,7 @@ router.post('/', validate(crearTurnoSchema), async (req, res, next) => {
       .insert({
         clinica_id: user.clinicaId,
         paciente_id: body.paciente_id,
-        consulta_id: body.consulta_id ?? null,
+        consulta_id: consultaId,
         numero,
         fecha,
         estado: 'esperando',
@@ -50,7 +161,9 @@ router.post('/', validate(crearTurnoSchema), async (req, res, next) => {
       .select(COLS)
       .single();
     if (error) return next(badRequest(error.message));
-    res.status(201).json(data);
+
+    const [enriquecido] = await enriquecerTurnos([data]);
+    res.status(201).json(enriquecido);
   } catch (err) {
     next(err);
   }
@@ -63,17 +176,53 @@ router.post('/', validate(crearTurnoSchema), async (req, res, next) => {
 router.get('/', validate(turnosQuery, 'query'), async (_req, res, next) => {
   try {
     const { fecha, estado } = _req.query as z.infer<typeof turnosQuery>;
-    let query = getSupabase().from('turnos').select(COLS);
-    if (fecha) query = query.eq('fecha', fecha);
+    // La sala de espera siempre es del día en curso: si no se filtra, se usa la
+    // fecha de hoy (America/Caracas) para que coincida con la agenda del día.
+    const dia = fecha ?? fechaHoyCaracas();
+    let query = getSupabase().from('turnos').select(COLS).eq('fecha', dia);
     if (estado) query = query.eq('estado', estado);
     query = query.order('numero', { ascending: true });
 
     const { data } = await query;
-    const ids = (data ?? []).map((t) => t.paciente_id as string);
-    const { data: pacientes } = await getSupabase().from('pacientes').select('id, nombre_completo, cedula');
-    const porId = new Map((pacientes ?? []).map((p) => [p.id, p]));
+    const turnos = await enriquecerTurnos(data ?? []);
+    res.json(turnos);
+  } catch (err) {
+    next(err);
+  }
+});
 
-    res.json((data ?? []).map((t) => ({ ...t, paciente: porId.get(t.paciente_id as string) ?? null })));
+/**
+ * PATCH /api/turnos/:id/medico
+ * Asigna el médico que atenderá al paciente. Si el turno no tiene consulta
+ * vinculada, la crea con fecha/hora automáticas (registro desde sala de espera).
+ */
+router.patch('/:id/medico', validate(idParamSchema, 'params'), validate(asignarMedicoSchema, 'body'), async (req, res, next) => {
+  try {
+    const { id } = req.params as z.infer<typeof idParamSchema>;
+    const { medico_id } = req.body as z.infer<typeof asignarMedicoSchema>;
+    const user = req.user!;
+
+    const { data: turno } = await getSupabase().from('turnos').select('id, paciente_id, consulta_id').eq('id', id).maybeSingle();
+    if (!turno) return next(notFound('Turno no encontrado'));
+
+    let consultaId = turno.consulta_id as string | null;
+    if (consultaId) {
+      const r = await getSupabase().from('consultas').update({ medico_id }).eq('id', consultaId);
+      if (r.error) return next(badRequest(r.error.message));
+    } else {
+      try {
+        consultaId = await crearConsultaSalaEspera(turno.paciente_id as string, user.clinicaId, medico_id);
+      } catch (err) {
+        return next(badRequest((err as Error).message));
+      }
+      const r = await getSupabase().from('turnos').update({ consulta_id: consultaId }).eq('id', id).select(COLS).single();
+      if (r.error) return next(badRequest(r.error.message));
+    }
+
+    const actualizado = await getSupabase().from('turnos').select(COLS).eq('id', id).single();
+    if (!actualizado.data) return next(notFound('Turno no encontrado'));
+    const [enriquecido] = await enriquecerTurnos([actualizado.data]);
+    res.json(enriquecido);
   } catch (err) {
     next(err);
   }

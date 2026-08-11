@@ -6,6 +6,11 @@ export const crearTurnoSchema = z.object({
   paciente_id: z.string().uuid('Paciente inválido'),
   consulta_id: z.string().uuid().optional().nullable(),
   prioridad: z.enum(['normal', 'prioridad', 'urgente']).optional(),
+  medico_id: z.string().uuid('Médico inválido').optional().nullable(),
+});
+
+export const asignarMedicoSchema = z.object({
+  medico_id: z.string().uuid('Médico inválido'),
 });
 
 export const estadoTurnoSchema = z.object({

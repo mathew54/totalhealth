@@ -28,6 +28,10 @@ export const env = {
   smtpUser: process.env.SMTP_USER ?? '',
   smtpPass: process.env.SMTP_PASS ?? '',
   smtpFrom: process.env.SMTP_FROM ?? '',
+  // Sesión de WhatsApp (Baileys): directorio donde se guardan las credenciales
+  // del dispositivo vinculado y código de país para normalizar teléfonos (VE=58).
+  whatsappSessionDir: process.env.WHATSAPP_SESSION_DIR ?? '.wa-session',
+  whatsappPaisCodigo: process.env.WHATSAPP_PAIS_CODIGO ?? '58',
 };
 
 if (env.nodeEnv !== 'test' && !env.useMock) {

@@ -19,6 +19,7 @@ import imagenesRoutes from '../modules/imagenes/imagenes.routes.js';
 import historialRoutes from '../modules/historial/historial.routes.js';
 import { publicRouter as tasasPublicRoutes, adminRouter as tasasAdminRoutes } from '../modules/tasas/tasas.routes.js';
 import mocksRoutes from '../modules/mocks/mocks.routes.js';
+import whatsappRoutes from '../modules/whatsapp/whatsapp.routes.js';
 import { env } from '../config/env.js';
 import { mockInfo } from '../mock/client.js';
 
@@ -36,6 +37,7 @@ router.get('/mock/info', (_req, res) => {
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
+router.use('/admin/whatsapp', whatsappRoutes);
 router.use('/pacientes', pacientesRoutes);
 router.use('/consultas', consultasRoutes);
 router.use('/examenes', examenesRoutes);

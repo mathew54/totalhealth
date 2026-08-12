@@ -6,6 +6,9 @@ import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
 import { WhatsAppConfig } from './WhatsAppConfig'
 import type { Profile } from '../../lib/rbac'
 import PrecioDual from '../../components/PrecioDual'
+import PhoneInput from '../../components/ui/PhoneInput'
+import { PasswordInput } from '../../components/ui/PasswordInput'
+import { formatearTelefono } from '../../lib/phone'
 import { useTasaUsd, usdABs, formatearBs } from '../../lib/moneda'
 
 type Tab = 'personal' | 'examenes' | 'reporteria' | 'auditoria' | 'config' | 'umbrales' | 'integracion' | 'tasas'
@@ -123,7 +126,9 @@ function PersonalTab() {
       roles: rolesSel,
       nombre_completo: fd.get('nombre_completo'),
       cedula: fd.get('cedula'),
-      telefono: fd.get('telefono'),
+      telefono: fd.get('telefono') || undefined,
+      country_code: fd.get('telefono_country_code') || undefined,
+      local_number: fd.get('telefono_local_number') || undefined,
       especialidades: especSel,
       colegiatura: fd.get('colegiatura') || undefined,
       firma_digital: fd.get('firma_digital') || undefined,
@@ -169,9 +174,9 @@ function PersonalTab() {
             </div>
           </Field>
           <Field label="Correo"><input name="email" type="email" required className={inputCls} /></Field>
-          <Field label="Contraseña (mín. 8)"><input name="password" type="password" required minLength={8} className={inputCls} /></Field>
+          <Field label="Contraseña (mín. 8)"><PasswordInput name="password" required minLength={8} className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></Field>
           <Field label="Documento de identidad (V/E/J/P/C)"><input name="cedula" className={inputCls} placeholder="V-12345678, P-…, J-…" /></Field>
-          <Field label="Teléfono"><input name="telefono" className={inputCls} /></Field>
+          <Field label="Teléfono"><PhoneInput name="telefono" /></Field>
           {esMedico && (
             <>
               <div className="sm:col-span-2">
@@ -895,6 +900,8 @@ function ConfigTab() {
       rif: fd.get('rif'),
       direccion: fd.get('direccion') || null,
       telefono: fd.get('telefono') || null,
+      country_code: fd.get('telefono_country_code') || undefined,
+      local_number: fd.get('telefono_local_number') || undefined,
       logo_url: logoData ?? fd.get('logo_url'),
       header_color,
     })
@@ -934,7 +941,7 @@ function ConfigTab() {
             <input name="direccion" defaultValue={direccion} className={inputCls} placeholder="Av. Principal, Caracas" />
           </Field>
           <Field label="Teléfono">
-            <input name="telefono" defaultValue={telefono} className={inputCls} placeholder="+58 412-1234567" />
+            <PhoneInput name="telefono" defaultValue={telefono} />
           </Field>
           <Field label="Logo">
             <div className="flex items-start gap-3">
@@ -1016,7 +1023,7 @@ function ConfigTab() {
           <p className="font-semibold">{razon_social || 'Tu razón social'}</p>
           {rif && <p className="text-xs opacity-80">R.I.F. {rif}</p>}
           {direccion && <p className="text-xs opacity-80">Dirección: {direccion}</p>}
-          {telefono && <p className="text-xs opacity-80">Tel: {telefono}</p>}
+          {telefono && <p className="text-xs opacity-80">Tel: {formatearTelefono(telefono)}</p>}
         </div>
       </div>
 

@@ -3,6 +3,8 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
+import PhoneInput from '../../components/ui/PhoneInput'
+import { formatearTelefono } from '../../lib/phone'
 
 type TipoDocumento = 'V' | 'E' | 'J' | 'P' | 'C'
 
@@ -20,6 +22,8 @@ interface Paciente {
   tipo_documento: string | null
   nombre_completo: string
   telefono: string | null
+  country_code?: string | null
+  local_number?: string | null
   email: string | null
   direccion: string | null
   sexo: 'M' | 'F' | null
@@ -98,7 +102,9 @@ export default function PacientesPage() {
     const payload: Record<string, unknown> = {
       nombre_completo: fd.get('nombre_completo'),
       tipo_documento: esMenor ? undefined : tipoDoc,
-      telefono: fd.get('telefono'),
+      telefono: fd.get('telefono') || undefined,
+      country_code: fd.get('telefono_country_code') || undefined,
+      local_number: fd.get('telefono_local_number') || undefined,
       email: fd.get('email') || undefined,
       direccion: fd.get('direccion') || undefined,
       sexo: fd.get('sexo') || undefined,
@@ -116,6 +122,8 @@ export default function PacientesPage() {
       payload.hijo = {
         nombre_completo: fd.get('hijo_nombre'),
         telefono: fd.get('hijo_telefono') || undefined,
+        country_code: fd.get('hijo_telefono_country_code') || undefined,
+        local_number: fd.get('hijo_telefono_local_number') || undefined,
         sexo: fd.get('hijo_sexo') || undefined,
         fecha_nacimiento: fd.get('hijo_fecha_nacimiento') ? new Date(String(fd.get('hijo_fecha_nacimiento'))).toISOString() : undefined,
       }
@@ -199,7 +207,7 @@ export default function PacientesPage() {
           )}
 
           <Field label="Nombre completo *"><input name="nombre_completo" required minLength={3} className={inputCls} /></Field>
-          <Field label="Teléfono"><input name="telefono" className={inputCls} /></Field>
+          <Field label="Teléfono"><PhoneInput name="telefono" /></Field>
           <Field label="Email"><input name="email" type="email" className={inputCls} /></Field>
           <Field label="Dirección"><input name="direccion" className={inputCls} /></Field>
           <Field label="Sexo">
@@ -224,7 +232,7 @@ export default function PacientesPage() {
                     <option value="F">Femenino</option>
                   </select>
                 </Field>
-                <Field label="Teléfono"><input name="hijo_telefono" className={inputCls} /></Field>
+                <Field label="Teléfono"><PhoneInput name="hijo_telefono" /></Field>
               </div>
               <p className="mt-3 text-xs text-slate-500">El hijo quedará vinculado automáticamente como dependiente del responsable (se muestra en el portal, tab Familia).</p>
             </div>
@@ -322,7 +330,7 @@ function FichaModal({ paciente, onClose, onEditar, onEliminar, esAdmin }: { paci
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          {paciente.telefono && <Info label="Teléfono" value={paciente.telefono} />}
+          {paciente.telefono && <Info label="Teléfono" value={formatearTelefono(paciente.telefono)} />}
           {paciente.email && <Info label="Email" value={paciente.email} />}
           {paciente.direccion && <Info label="Dirección" value={paciente.direccion} />}
           {paciente.fecha_nacimiento && <Info label="Nacimiento" value={new Date(paciente.fecha_nacimiento).toLocaleDateString()} />}
@@ -433,6 +441,8 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
     const payload: Record<string, unknown> = {
       nombre_completo: fd.get('nombre_completo'),
       telefono: fd.get('telefono'),
+      country_code: fd.get('telefono_country_code') || undefined,
+      local_number: fd.get('telefono_local_number') || undefined,
       email: fd.get('email') || '',
       direccion: fd.get('direccion') || '',
       sexo: fd.get('sexo') || undefined,
@@ -477,7 +487,7 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
           <Field label="Nombre completo *">
             <input name="nombre_completo" required minLength={3} defaultValue={paciente.nombre_completo} className={inputCls} />
           </Field>
-          <Field label="Teléfono"><input name="telefono" defaultValue={paciente.telefono ?? ''} className={inputCls} /></Field>
+          <Field label="Teléfono"><PhoneInput name="telefono" defaultValue={paciente.telefono} /></Field>
           <Field label="Email"><input name="email" type="email" defaultValue={paciente.email ?? ''} className={inputCls} /></Field>
           <Field label="Dirección"><input name="direccion" defaultValue={paciente.direccion ?? ''} className={inputCls} /></Field>
           <Field label="Sexo">

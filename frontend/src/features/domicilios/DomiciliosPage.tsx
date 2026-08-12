@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import PrintHeader from '../../components/ui/PrintHeader'
+import PhoneInput from '../../components/ui/PhoneInput'
 
 interface Domicilio {
   id: string
@@ -41,6 +42,7 @@ export default function DomiciliosPage() {
   const [pacienteId, setPacienteId] = useState('')
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
+  const [telPartes, setTelPartes] = useState<{ country_code?: string; local_number?: string }>({})
   const [notas, setNotas] = useState('')
 
   const { data: domicilios = [], isLoading } = useQuery<Domicilio[]>({
@@ -54,11 +56,11 @@ export default function DomiciliosPage() {
   })
 
   const crear = useMutation({
-    mutationFn: (payload: { paciente_id: string; direccion: string; telefono?: string; notas?: string }) => api.post('/domicilios', payload),
+    mutationFn: (payload: { paciente_id: string; direccion: string; telefono?: string; country_code?: string; local_number?: string; notas?: string }) => api.post('/domicilios', payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['domicilios'] })
       setShowForm(false)
-      setPacienteId(''); setDireccion(''); setTelefono(''); setNotas('')
+      setPacienteId(''); setDireccion(''); setTelefono(''); setTelPartes({}); setNotas('')
       setError(null)
     },
     onError: (e) => setError(getApiError(e)),
@@ -101,7 +103,13 @@ export default function DomiciliosPage() {
               <input value={direccion} onChange={(e) => setDireccion(e.target.value)} className={inputCls} placeholder="Av. …" />
             </Field>
             <Field label="Teléfono">
-              <input value={telefono} onChange={(e) => setTelefono(e.target.value)} className={inputCls} placeholder="+58…" />
+              <PhoneInput
+                value={telefono}
+                onChange={(p) => {
+                  setTelefono(p.telefono ?? '')
+                  setTelPartes({ country_code: p.country_code, local_number: p.local_number })
+                }}
+              />
             </Field>
             <Field label="Notas">
               <input value={notas} onChange={(e) => setNotas(e.target.value)} className={inputCls} placeholder="Referencias…" />
@@ -109,7 +117,7 @@ export default function DomiciliosPage() {
           </div>
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           <button
-            onClick={() => pacienteId && direccion && crear.mutate({ paciente_id: pacienteId, direccion, telefono: telefono || undefined, notas: notas || undefined })}
+            onClick={() => pacienteId && direccion && crear.mutate({ paciente_id: pacienteId, direccion, telefono: telefono || undefined, country_code: telPartes.country_code, local_number: telPartes.local_number, notas: notas || undefined })}
             disabled={!pacienteId || !direccion || crear.isPending}
             className="mt-4 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >

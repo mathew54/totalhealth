@@ -11,6 +11,7 @@ import {
   type Cuestionario,
   type Definicion,
 } from '../cuestionario/CuestionarioModal'
+import { PasswordInput } from '../../components/ui/PasswordInput'
 
 /**
  * Pestaña "Cuestionario" dentro del expediente del paciente (Historial Médico).
@@ -183,7 +184,7 @@ function EliminarModal({ cuestionario, onClose, onListo }: {
         </label>
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-700">Contraseña de administrador</span>
-          <input name="password" type="password" required className={inputCls} />
+          <PasswordInput name="password" required className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
         </label>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">

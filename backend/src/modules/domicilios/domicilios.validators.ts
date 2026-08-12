@@ -7,6 +7,8 @@ export const crearDomicilioSchema = z.object({
   solicitud_id: z.string().uuid().optional().nullable(),
   direccion: z.string().min(5, 'Dirección requerida').max(500),
   telefono: z.string().max(30).optional().nullable(),
+  country_code: z.string().max(6).optional(),
+  local_number: z.string().max(20).optional(),
   fecha_visita: z.string().datetime().optional().nullable(),
   estado: z.enum(['solicitada', 'programada', 'en_ruta', 'tomada', 'completada', 'cancelada']).optional(),
   notas: z.string().max(1000).optional().nullable(),

@@ -15,6 +15,9 @@ export const env = {
   portalTokenSecret: process.env.PORTAL_TOKEN_SECRET ?? 'dev-secret',
   portalTokenTtlMin: num(process.env.PORTAL_TOKEN_TTL_MIN, 30),
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  // URL pública del front-end (base), usada para construir enlaces del portal
+  // del paciente en mensajes automáticos (p. ej. resultados). Por defecto el origen CORS.
+  frontendUrl: process.env.FRONTEND_URL ?? '',
   otpMaxIntentos: num(process.env.OTC_MAX_INTENTOS, 5),
   // Bloqueo por intentos fallidos de login del backoffice.
   loginMaxIntentos: num(process.env.LOGIN_MAX_INTENTOS, 5),

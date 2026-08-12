@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useSessionStore } from '../../stores/sessionStore'
 import { ROL_LABELS, type Profile } from '../../lib/rbac'
 import { getApiError } from '../../lib/api'
+import { PasswordInput } from '../../components/ui/PasswordInput'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -190,14 +191,13 @@ export default function LoginPage() {
             <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">
               Contraseña
             </label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               required
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              className="w-full rounded-lg border border-slate-300 py-2.5 pl-3 pr-10 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
             />
           </div>
 

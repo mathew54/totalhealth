@@ -15,6 +15,7 @@ import {
   updatePacienteSchema,
 } from './pacientes.validators.js';
 import { encryptCampo, decryptCampo } from '../../services/cifrado.js';
+import { telefonoDesdeBody, conTelefonoSeparado } from '../../services/phoneNumber.js';
 
 const router = Router();
 router.use(authRequired);
@@ -24,10 +25,12 @@ const ELIMINAR_PACIENTE = requireRole('admin', 'super_root');
 
 const PACIENTE_COLS = 'id, cedula, tipo_documento, nombre_completo, fecha_nacimiento, telefono, email, direccion, sexo, es_menor, representante_id, parentesco_representante, fecha_consentimiento, deleted_at, created_at';
 
-/** Descifra los campos sensibles de una fila de paciente (telefono). */
+/** Descifra los campos sensibles de una fila de paciente (telefono) y expone el
+ * teléfono como E.164 + piezas separadas (country_code / local_number). */
 function descifrarPaciente<T extends { telefono?: unknown }>(p: T): T {
   if (!p) return p;
-  return { ...p, telefono: decryptCampo((p.telefono as string | null | undefined) ?? null) };
+  const claro = decryptCampo((p.telefono as string | null | undefined) ?? null);
+  return conTelefonoSeparado({ ...p, telefono: claro });
 }
 
 /** Verifica que un paciente pertenezca a la clínica del usuario (si aplica). */
@@ -122,13 +125,13 @@ router.post('/', ESCRIBIR_PACIENTE, validate(createPacienteSchema), async (req, 
       }
     }
 
-    const { hijo, ...datos } = body;
+    const { hijo, country_code, local_number, ...datos } = body;
     const { data: paciente, error } = await getSupabase()
       .from('pacientes')
       .insert({
         ...datos,
         cedula,
-        telefono: encryptCampo((datos as { telefono?: string | null }).telefono ?? null),
+        telefono: encryptCampo(telefonoDesdeBody({ telefono: datos.telefono, country_code, local_number })),
         tipo_documento: body.tipo_documento ?? (cedula ? cedula[0] : null),
         es_menor: body.es_menor ?? false,
         representante_id: body.es_menor ? body.representante_id : null,
@@ -151,7 +154,7 @@ router.post('/', ESCRIBIR_PACIENTE, validate(createPacienteSchema), async (req, 
           tipo_documento: null,
           nombre_completo: hijo.nombre_completo,
           fecha_nacimiento: hijo.fecha_nacimiento ? new Date(hijo.fecha_nacimiento).toISOString() : null,
-          telefono: encryptCampo(hijo.telefono ?? null),
+          telefono: encryptCampo(telefonoDesdeBody(hijo as { telefono?: string; country_code?: string; local_number?: string })),
           sexo: hijo.sexo ?? null,
           es_menor: true,
           representante_id: paciente.id,
@@ -235,11 +238,11 @@ router.put('/:id', ESCRIBIR_PACIENTE, validate(updatePacienteSchema), validate(i
 
     const payload: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(body)) {
-      if (k === 'cedula') continue;
+      if (k === 'cedula' || k === 'country_code' || k === 'local_number') continue;
       payload[k] = v === '' ? null : v instanceof Date ? v.toISOString() : v;
     }
-    if ('telefono' in payload) {
-      payload.telefono = encryptCampo((payload.telefono as string | null) ?? null);
+    if ('telefono' in payload || body.country_code !== undefined || body.local_number !== undefined) {
+      payload.telefono = encryptCampo(telefonoDesdeBody({ telefono: body.telefono, country_code: body.country_code, local_number: body.local_number }));
     }
 
     if (body.cedula) {

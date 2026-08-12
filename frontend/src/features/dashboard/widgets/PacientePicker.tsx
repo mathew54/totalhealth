@@ -6,6 +6,7 @@ export interface PacienteMini {
   id: string
   cedula: string | null
   nombre_completo: string
+  telefono?: string | null
 }
 
 const inputCls =

@@ -11,19 +11,22 @@ import { validarRenovarFirmas } from '../../services/storageService.js';
 import { obtenerTasasActivas } from '../../services/moneda.js';
 import { montoAUsd, usdABs } from '../../services/moneda.js';
 import { encryptCampo, decryptCampo } from '../../services/cifrado.js';
+import { telefonoDesdeBody, conTelefonoSeparado } from '../../services/phoneNumber.js';
 
 const router = Router();
 
 router.use(authRequired, requireRole('admin', 'super_root'));
 
-/** Descifra los campos sensibles de un perfil (telefono, firma_digital). */
+/** Descifra los campos sensibles de un perfil (telefono, firma_digital) y expone
+ * el teléfono como E.164 + piezas separadas (country_code / local_number). */
 function descifrarPerfil<T extends { telefono?: unknown; firma_digital?: unknown }>(perfil: T): T {
   if (!perfil) return perfil;
-  return {
+  const claro = decryptCampo((perfil.telefono as string | null | undefined) ?? null);
+  return conTelefonoSeparado({
     ...perfil,
-    telefono: decryptCampo((perfil.telefono as string | null | undefined) ?? null),
+    telefono: claro,
     firma_digital: decryptCampo((perfil.firma_digital as string | null | undefined) ?? null),
-  };
+  });
 }
 
 /**
@@ -104,7 +107,7 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
         clinica_id: user.clinicaId,
         nombre_completo: body.nombre_completo,
         cedula: body.cedula ? normalizeDocumento(body.cedula) : null,
-        telefono: encryptCampo(body.telefono ?? null),
+        telefono: encryptCampo(telefonoDesdeBody(body)),
         especialidad: medico.especialidad,
         especialidades: medico.especialidades,
         especialidad_activa: medico.especialidad_activa,
@@ -166,12 +169,16 @@ router.patch('/staff/:id', validate(updateStaffSchema), async (req, res, next) =
     }
 
     const update: Record<string, unknown> = { ...body };
+    delete update.country_code;
+    delete update.local_number;
     if (body.roles) {
       const roles = [...new Set(body.roles)];
       update.roles = roles;
       update.role = roles[0];
     }
-    if (body.telefono !== undefined) update.telefono = encryptCampo(body.telefono);
+    if (body.telefono !== undefined || body.country_code !== undefined || body.local_number !== undefined) {
+      update.telefono = encryptCampo(telefonoDesdeBody(body));
+    }
     if (body.firma_digital !== undefined) update.firma_digital = encryptCampo(body.firma_digital);
 
     // Normaliza el array de especialidades y deriva la primaria + categoría.
@@ -427,15 +434,17 @@ router.get('/config', async (_req, res, next) => {
       .maybeSingle();
     if (error) return next(error);
     res.json(
-      data ?? {
-        razon_social: 'TotalHealth',
-        rif: '',
-        direccion: '',
-        telefono: '',
-        logo_url: '',
-        header_color: '#8b5cf6',
-        updated_at: null,
-      },
+      conTelefonoSeparado(
+        data ?? {
+          razon_social: 'TotalHealth',
+          rif: '',
+          direccion: '',
+          telefono: '',
+          logo_url: '',
+          header_color: '#8b5cf6',
+          updated_at: null,
+        },
+      ),
     );
   } catch (err) {
     next(err);
@@ -449,14 +458,19 @@ router.get('/config', async (_req, res, next) => {
 router.put('/config', validate(configSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof configSchema>;
+    const { country_code, local_number, ...resto } = body;
+    const update: Record<string, unknown> = { ...resto, updated_at: new Date().toISOString() };
+    if (body.telefono !== undefined || body.country_code !== undefined || body.local_number !== undefined) {
+      update.telefono = telefonoDesdeBody(body);
+    }
     const { data, error } = await getSupabase()
       .from('app_config')
-      .update({ ...body, updated_at: new Date().toISOString() })
+      .update(update)
       .eq('id', true)
       .select('razon_social, rif, direccion, telefono, logo_url, header_color, updated_at')
       .single();
     if (error) return next(badRequest(error.message));
-    res.json(data);
+    res.json(conTelefonoSeparado(data));
   } catch (err) {
     next(err);
   }

@@ -54,6 +54,8 @@ export const crearHijoSchema = z.object({
   nombre_completo: z.string().min(3, 'Nombre requerido'),
   fecha_nacimiento: z.coerce.date().optional(),
   telefono: z.string().optional(),
+  country_code: z.string().max(6).optional(),
+  local_number: z.string().max(20).optional(),
   sexo: z.enum(['M', 'F']).optional(),
 });
 
@@ -65,6 +67,8 @@ export const createPacienteSchema = z
     nombre_completo: z.string().min(3, 'Nombre requerido'),
     fecha_nacimiento: z.coerce.date().optional(),
     telefono: z.string().optional(),
+    country_code: z.string().max(6).optional(),
+    local_number: z.string().max(20).optional(),
     email: z.string().email('Email inválido').optional().or(z.literal('')),
     direccion: z.string().optional(),
     sexo: z.enum(['M', 'F']).optional(),
@@ -90,6 +94,8 @@ export const updatePacienteSchema = z
     tipo_documento: z.enum(TIPOS_DOCUMENTO).optional(),
     fecha_nacimiento: z.coerce.date().optional(),
     telefono: z.string().optional(),
+    country_code: z.string().max(6).optional(),
+    local_number: z.string().max(20).optional(),
     email: z.string().email('Email inválido').optional().or(z.literal('')),
     direccion: z.string().optional(),
     sexo: z.enum(['M', 'F']).optional(),

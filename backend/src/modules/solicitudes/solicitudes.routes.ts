@@ -495,6 +495,7 @@ router.post(
       if (iErr) return next(badRequest(iErr.message));
 
       const alertasGeneradas: Array<Record<string, unknown>> = [];
+      const catalogo = await catalogoExamenes();
       for (const ins of insertados ?? []) {
         await getSupabase()
           .from('solicitudes_detalle')
@@ -522,6 +523,34 @@ router.post(
             })),
           );
         }
+
+        // Notifica por cada examen con resultado (todos los exámenes del programa).
+        try {
+          const nombreExamen = catalogo.get(detalle?.examen_id as string)?.nombre ?? 'un examen';
+          const valores = lineas.find((l) => l.solicitud_detalle_id === ins.solicitud_detalle_id)?.valores;
+          const detalles = valores && typeof valores === 'object'
+            ? Object.entries(valores as Record<string, unknown>)
+                .filter(([, v]) => v != null && v !== '')
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(' · ')
+            : undefined;
+          const { data: paciente } = await getSupabase()
+            .from('pacientes')
+            .select('nombre_completo')
+            .eq('id', solicitud.paciente_id)
+            .maybeSingle();
+          if (paciente?.nombre_completo) {
+            await notificarResultadoListo({
+              pacienteId: solicitud.paciente_id,
+              nombre: paciente.nombre_completo as string,
+              examen: nombreExamen,
+              detalles,
+              metadata: { solicitud_id: id, solicitud_detalle_id: ins.solicitud_detalle_id, resultado_id: ins.id },
+            });
+          }
+        } catch {
+          // No romper la carga de resultados si el aviso falla.
+        }
       }
 
       const { data: lineasActualizadas } = await getSupabase()
@@ -532,20 +561,6 @@ router.post(
 
       if (todasListas) {
         await getSupabase().from('solicitudes').update({ estado: 'listo' }).eq('id', id);
-
-        // Notifica al paciente que su resultado está disponible.
-        const { data: paciente } = await getSupabase()
-          .from('pacientes')
-          .select('id, nombre_completo')
-          .eq('id', solicitud.paciente_id)
-          .maybeSingle();
-        if (paciente) {
-          await notificarResultadoListo({
-            pacienteId: paciente.id,
-            nombre: paciente.nombre_completo,
-            examen: 'Tus análisis de laboratorio',
-          }).catch(() => {});
-        }
       }
 
       res.status(201).json({ resultados: insertados, solicitud_estado: todasListas ? 'listo' : 'en_proceso', alertas_generadas: alertasGeneradas });

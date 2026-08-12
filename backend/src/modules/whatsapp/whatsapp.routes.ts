@@ -10,6 +10,7 @@ import {
   obtenerQrWhatsAppDataUrl,
   solicitarCodigoEmparejamiento,
   enviarWhatsApp,
+  type WhatsAppAdjunto,
 } from '../../services/whatsappService.js';
 
 const router = Router();
@@ -23,6 +24,15 @@ const pairingSchema = z.object({
 const testSchema = z.object({
   destino: z.string().regex(/^\+?\d[\d\s-]{6,}$/, 'Teléfono inválido').transform((v) => v.replace(/[\s-]/g, '')),
   mensaje: z.string().min(1, 'Mensaje requerido').max(1600, 'Mensaje demasiado largo'),
+});
+
+const fileSchema = z.object({
+  destino: z.string().regex(/^\+?\d[\d\s-]{6,}$/, 'Teléfono inválido').transform((v) => v.replace(/[\s-]/g, '')),
+  mensaje: z.string().optional().transform((v) => v ?? ''),
+  tipo: z.enum(['image', 'document']).optional().transform((v) => v ?? 'document'),
+  nombre: z.string().optional().transform((v) => v || 'archivo'),
+  mime: z.string().optional().transform((v) => v || 'application/octet-stream'),
+  dataBase64: z.string().min(1, 'El archivo es requerido'),
 });
 
 /**
@@ -75,6 +85,32 @@ router.post('/test', validate(testSchema), async (req, res, next) => {
     next(badRequest((err as Error).message));
   }
 });
+
+/**
+ * POST /api/admin/whatsapp/enviar-archivo
+ * Envía un mensaje de texto con un archivo adjunto (imagen o documento) al
+ * destinatario, desde el dispositivo de la clínica. Cuerpo JSON:
+ * { destino, mensaje?, tipo, nombre, mime, dataBase64 } (dataBase64 sin prefijo).
+ */
+router.post('/enviar-archivo', validate(fileSchema), async (req, res, next) => {
+  try {
+    const body = req.body as z.infer<typeof fileSchema>;
+    const adjuntos: WhatsAppAdjunto[] = [
+      {
+        tipo: body.tipo,
+        data: Buffer.from(body.dataBase64, 'base64'),
+        mimetype: body.mime,
+        fileName: body.nombre,
+        caption: body.mensaje || undefined,
+      },
+    ];
+    const resultado = await enviarWhatsApp(body.destino, body.mensaje, adjuntos);
+    res.json(resultado);
+  } catch (err) {
+    next(badRequest((err as Error).message));
+  }
+});
+
 
 /**
  * POST /api/admin/whatsapp/logout

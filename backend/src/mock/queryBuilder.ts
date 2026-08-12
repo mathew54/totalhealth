@@ -6,6 +6,7 @@ type Op =
   | { op: 'gte'; col: string; val: unknown }
   | { op: 'lte'; col: string; val: unknown }
   | { op: 'in'; col: string; val: unknown[] }
+  | { op: 'not'; col: string; notOp: string; val: unknown }
 
 /** Compara dos valores (números o strings) para filtros gte/lte. */
 function compare(a: unknown, b: unknown): number {
@@ -60,6 +61,10 @@ export class QueryBuilder {
     this.filters.push({ op: 'in', col, val })
     return this
   }
+  not(col: string, op: string, val: unknown) {
+    this.filters.push({ op: 'not', col, notOp: op, val } as never)
+    return this
+  }
   order(col: string, opts?: { ascending?: boolean }) {
     this.orderCol = col
     this.orderAsc = opts?.ascending ?? true
@@ -95,6 +100,10 @@ export class QueryBuilder {
           return v != null && compare(f.val, v) >= 0
         case 'in':
           return Array.isArray(f.val) && f.val.includes(v)
+        case 'not':
+          // Soporta el caso típico: not(col, 'is', null) → col no nulo.
+          if (f.notOp === 'is' && f.val === null) return v != null
+          return v !== f.val
       }
     })
   }

@@ -13,7 +13,7 @@ export interface Factura {
   serie: string;
   control: string;
   tipo: 'comprobante' | 'recibo' | 'factura';
-  emisor: { razon_social: string; rif: string; direccion?: string; telefono?: string };
+  emisor: { razon_social: string; rif: string; direccion?: string; telefono?: string; country_code?: string | null; local_number?: string | null };
   receptor: { nombre: string; cedula: string | null };
   fecha: string; // ISO
   moneda: string;

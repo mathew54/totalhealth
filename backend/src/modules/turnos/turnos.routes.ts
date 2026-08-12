@@ -7,6 +7,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import { crearTurnoSchema, asignarMedicoSchema, idParamSchema, estadoTurnoSchema, turnosQuery } from './turnos.validators.js';
 import { fechaHoyCaracas } from '../../services/bcv.js';
+import { notificarSalaEspera } from '../../services/notifier.js';
 
 const router = Router();
 router.use(authRequired, requireRole('secretaria', 'admin', 'super_root'));
@@ -163,6 +164,23 @@ router.post('/', validate(crearTurnoSchema), async (req, res, next) => {
     if (error) return next(badRequest(error.message));
 
     const [enriquecido] = await enriquecerTurnos([data]);
+
+    // Genera el aviso de sala de espera (recordatorio tipo 'turno') automáticamente.
+    try {
+      const p = await getSupabase().from('pacientes').select('nombre_completo').eq('id', body.paciente_id).maybeSingle();
+      if (p.data?.nombre_completo) {
+        await notificarSalaEspera({
+          pacienteId: body.paciente_id,
+          nombre: p.data.nombre_completo as string,
+          numero,
+          fecha,
+          metadata: { turno_id: data.id },
+        });
+      }
+    } catch {
+      // No romper la creación del turno si el aviso falla.
+    }
+
     res.status(201).json(enriquecido);
   } catch (err) {
     next(err);
@@ -237,8 +255,26 @@ router.patch('/:id/estado', validate(idParamSchema, 'params'), validate(estadoTu
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const { estado } = req.body as z.infer<typeof estadoTurnoSchema>;
 
-    const { data: turno } = await getSupabase().from('turnos').select('id, estado, consulta_id').eq('id', id).maybeSingle();
+    const { data: turno } = await getSupabase().from('turnos').select('id, estado, consulta_id, paciente_id, numero').eq('id', id).maybeSingle();
     if (!turno) return next(notFound('Turno no encontrado'));
+
+    // Avisa en el momento de la llamada ("es tu turno").
+    if (estado === 'llamado') {
+      try {
+        const p = await getSupabase().from('pacientes').select('nombre_completo').eq('id', turno.paciente_id).maybeSingle();
+        if (p.data?.nombre_completo) {
+          await notificarSalaEspera({
+            pacienteId: turno.paciente_id as string,
+            nombre: p.data.nombre_completo as string,
+            numero: turno.numero as number,
+            atendido: true,
+            metadata: { turno_id: turno.id },
+          });
+        }
+      } catch {
+        // No romper el cambio de estado si el aviso falla.
+      }
+    }
 
     const patch: Record<string, unknown> = { estado };
     if (estado === 'llamado') patch.hora_llamado = new Date().toISOString();

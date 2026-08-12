@@ -7,6 +7,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, conflict, notFound } from '../../utils/httpError.js';
 import { getPaymentProvider } from '../../services/paymentProvider.js';
 import { construirFactura, montoTexto } from '../../services/invoice.js';
+import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { obtenerTasaUsdActiva, obtenerTasasActivas, usdABs, bsAUsd, montoAUsd } from '../../services/moneda.js';
 import {
   cobroLaboratorioSchema,
@@ -328,12 +329,12 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
 
     const factura = construirFactura({
       tipo,
-      emisor: {
+      emisor: conTelefonoSeparado({
         razon_social: emisor?.razon_social ?? 'TotalHealth',
         rif: emisor?.rif ?? '',
         direccion: emisor?.direccion ?? null,
         telefono: emisor?.telefono ?? null,
-      },
+      }),
       receptor: {
         nombre: receptor?.nombre_completo ?? '',
         cedula: receptor?.cedula ?? null,

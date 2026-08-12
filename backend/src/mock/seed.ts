@@ -103,6 +103,9 @@ export const SEED: Record<string, Row[]> = {
     { id: '20000000-0000-0000-0000-000000000013', cedula: 'V-11555987', tipo_documento: 'V', nombre_completo: 'Pedro Luis Fajardo', fecha_nacimiento: '1990-01-01', telefono: null, email: null, direccion: null, sexo: null, es_menor: false, representante_id: null, parentesco_representante: null, clinica_id: CLINICA_ID, fecha_consentimiento: dayAgo(15), created_at: dayAgo(15), updated_at: dayAgo(15), deleted_at: null },
     // Paciente con borrado lógico (debe NO aparecer en búsquedas).
     { id: '20000000-0000-0000-0000-000000000014', cedula: 'V-10001234', tipo_documento: 'V', nombre_completo: 'Eliminado Prueba', fecha_nacimiento: '1980-08-08', telefono: null, email: null, direccion: 'Caracas', sexo: 'M', es_menor: false, representante_id: null, parentesco_representante: null, clinica_id: CLINICA_ID, fecha_consentimiento: dayAgo(20), created_at: dayAgo(20), updated_at: dayAgo(20), deleted_at: dayAgo(2) },
+    // Paciente demo V-19021231 con consulta y exámenes de laboratorio para
+    // probar el flujo de subida de resultados y la notificación automática.
+    { id: '20000000-0000-0000-0000-000000000015', cedula: 'V-19021231', tipo_documento: 'V', nombre_completo: 'Andrés Salazar Quintana', fecha_nacimiento: '1987-09-14', telefono: '+584244458116', email: 'andres.salazar@example.com', direccion: 'Caracas', sexo: 'M', es_menor: false, representante_id: null, parentesco_representante: null, clinica_id: CLINICA_ID, fecha_consentimiento: dayAgo(3), created_at: dayAgo(3), updated_at: dayAgo(3), deleted_at: null },
   ],
 
   consultas: [
@@ -121,6 +124,8 @@ export const SEED: Record<string, Row[]> = {
     { id: '30000000-0000-0000-0000-000000000009', paciente_id: '20000000-0000-0000-0000-000000000008', medico_id: AUTH_USERS[6].id, clinica_id: CLINICA_ID, fecha_hora: dayAgo(6, 10), motivo: 'Dolor de rodilla', diagnostico: 'Gonalgia por desgaste meniscal', notas: 'Reposo relativo y fisioterapia', estado: 'completada', origen: 'staff', created_at: dayAgo(6), updated_at: dayAgo(5) },
     // Consulta programada con la Dra. Suárez para paciente crónico.
     { id: '30000000-0000-0000-0000-000000000010', paciente_id: '20000000-0000-0000-0000-000000000012', medico_id: AUTH_USERS[5].id, clinica_id: CLINICA_ID, fecha_hora: future(2, 16), motivo: 'Cardiopatía hipertensiva — control', diagnostico: null, notas: null, estado: 'programada', origen: 'online', created_at: dayAgo(1), updated_at: dayAgo(1) },
+    // Consulta completada del paciente demo V-19021231 (Andrés Salazar).
+    { id: '30000000-0000-0000-0000-000000000011', paciente_id: '20000000-0000-0000-0000-000000000015', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_hora: dayAgo(3, 10), motivo: 'Chequeo de rutina — perfil metabólico', diagnostico: 'En observación, pendiente de exámenes', notas: 'Solicitar glicemia y perfil lipídico', estado: 'completada', origen: 'staff', created_at: dayAgo(3), updated_at: dayAgo(3) },
   ],
 
   vinculos_familiares: [
@@ -163,6 +168,10 @@ export const SEED: Record<string, Row[]> = {
     { id: '50000000-0000-0000-0000-000000000010', consulta_id: '30000000-0000-0000-0000-000000000006', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[5].id, clinica_id: CLINICA_ID, fecha: todayISO(), estado: 'en_proceso', cobrado: true, descuento: 5, nota: 'Perfil lipídico completo', created_at: todayISO(), updated_at: todayISO() },
     // Solicitud lista para entregar (estado listo).
     { id: '50000000-0000-0000-0000-000000000011', consulta_id: null, paciente_id: '20000000-0000-0000-0000-000000000012', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha: dayAgo(3), estado: 'listo', cobrado: true, descuento: 0, nota: null, created_at: dayAgo(3), updated_at: dayAgo(1) },
+    // Solicitudes del paciente demo V-19021231 listas para que el laboratorio
+    // procese y suba el resultado (dispara la notificación automática al portal).
+    { id: '50000000-0000-0000-0000-000000000012', consulta_id: '30000000-0000-0000-0000-000000000011', paciente_id: '20000000-0000-0000-0000-000000000015', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha: dayAgo(2), estado: 'en_proceso', cobrado: true, descuento: 0, nota: 'Perfil metabólico: glicemia + colesterol', created_at: dayAgo(2), updated_at: dayAgo(1) },
+    { id: '50000000-0000-0000-0000-000000000013', consulta_id: '30000000-0000-0000-0000-000000000011', paciente_id: '20000000-0000-0000-0000-000000000015', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha: dayAgo(1), estado: 'pendiente', cobrado: true, descuento: 0, nota: 'Hematología completa', created_at: dayAgo(1), updated_at: dayAgo(1) },
   ],
 
   solicitudes_detalle: [
@@ -183,6 +192,11 @@ export const SEED: Record<string, Row[]> = {
     { id: '60000000-0000-0000-0000-000000000014', solicitud_id: '50000000-0000-0000-0000-000000000010', examen_id: '40000000-0000-0000-0000-000000000001', resultado_id: null, precio: 15 },
     // Detalle de solicitud 11 (listo): glicemia ya procesada.
     { id: '60000000-0000-0000-0000-000000000015', solicitud_id: '50000000-0000-0000-0000-000000000011', examen_id: '40000000-0000-0000-0000-000000000002', resultado_id: '70000000-0000-0000-0000-000000000008', precio: 10 },
+    // Detalles de las solicitudes del paciente demo V-19021231 (sin resultado,
+    // para que el laboratorio los procese).
+    { id: '60000000-0000-0000-0000-000000000016', solicitud_id: '50000000-0000-0000-0000-000000000012', examen_id: '40000000-0000-0000-0000-000000000002', resultado_id: null, precio: 10 },
+    { id: '60000000-0000-0000-0000-000000000017', solicitud_id: '50000000-0000-0000-0000-000000000012', examen_id: '40000000-0000-0000-0000-000000000003', resultado_id: null, precio: 12 },
+    { id: '60000000-0000-0000-0000-000000000018', solicitud_id: '50000000-0000-0000-0000-000000000013', examen_id: '40000000-0000-0000-0000-000000000001', resultado_id: null, precio: 15 },
   ],
 
   resultados: [

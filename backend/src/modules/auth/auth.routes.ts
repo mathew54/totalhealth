@@ -8,6 +8,7 @@ import { forbidden } from '../../utils/httpError.js';
 import { normalizeDocumento } from '../pacientes/pacientes.validators.js';
 import { estadoBloqueo, registrarIntentoFallido, reiniciarIntentos } from '../../services/loginLockout.js';
 import { encryptCampo, decryptCampo } from '../../services/cifrado.js';
+import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { generarSecreto, otpauthUri, validarCodigo } from '../../services/totp.js';
 import { guardarSesionPendiente, registrarCodigoInvalido, tomarSesionPendiente } from '../../services/mfaSessions.js';
 import { signMfaToken, verifyMfaToken } from '../../utils/jwt.js';
@@ -290,14 +291,16 @@ router.get('/me', authRequired, async (req, res, next) => {
     if (error) return next(error);
 
 const roles = Array.isArray(profile.roles) ? (profile.roles as Rol[]) : [req.user.role];
-    res.json({
-      ...profile,
-      telefono: decryptCampo((profile.telefono as string | null | undefined) ?? null),
-      firma_digital: decryptCampo((profile.firma_digital as string | null | undefined) ?? null),
-      role: req.user.role,
-      roles,
-      mfa_activo: profile.mfa_activo === true,
-    });
+    res.json(
+      conTelefonoSeparado({
+        ...profile,
+        telefono: decryptCampo((profile.telefono as string | null | undefined) ?? null),
+        firma_digital: decryptCampo((profile.firma_digital as string | null | undefined) ?? null),
+        role: req.user.role,
+        roles,
+        mfa_activo: profile.mfa_activo === true,
+      }),
+    );
   } catch (err) {
     next(err);
   }

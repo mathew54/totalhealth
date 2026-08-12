@@ -7,6 +7,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, forbidden, notFound } from '../../utils/httpError.js';
 import { recordatorioCita } from '../../services/notifier.js';
 import { decryptCampo } from '../../services/cifrado.js';
+import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { consultasQuery, createConsultaSchema, diagnosticoSchema, idParamSchema } from './consultas.validators.js';
 
 const router = Router();
@@ -253,7 +254,7 @@ router.get('/:id', validate(idParamSchema, 'params'), async (req, res, next) => 
     res.json({
       ...consulta,
       paciente: paciente
-        ? { ...paciente, telefono: decryptCampo((paciente.telefono as string | null) ?? null) }
+        ? conTelefonoSeparado({ ...paciente, telefono: decryptCampo((paciente.telefono as string | null) ?? null) })
         : null,
     });
   } catch (err) {

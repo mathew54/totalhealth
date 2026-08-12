@@ -11,6 +11,7 @@ import { normalizeCedula } from '../pacientes/pacientes.validators.js';
 import { recordatorioCita } from '../../services/notifier.js';
 import { getMessagingProvider } from '../../services/messagingProvider.js';
 import { decryptCampo } from '../../services/cifrado.js';
+import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { registrarAuditoria, ipDeRequest } from '../../services/auditoria.js';
 import { obtenerTasasActivas, usdABs, montoAUsd } from '../../services/moneda.js';
 import { fechaHoyCaracas } from '../../services/bcv.js';
@@ -48,7 +49,8 @@ async function buscarPacientePorCedula(cedulaNormalizada: string) {
     .eq('cedula', cedulaNormalizada)
     .maybeSingle();
   if (!data) return data;
-  return { ...data, telefono: decryptCampo((data.telefono as string | null) ?? null) };
+  const claro = decryptCampo((data.telefono as string | null) ?? null);
+  return conTelefonoSeparado({ ...data, telefono: claro });
 }
 
 /**

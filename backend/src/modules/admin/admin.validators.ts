@@ -11,6 +11,8 @@ export const createStaffSchema = z.object({
   nombre_completo: z.string().min(3, 'Nombre requerido'),
   cedula: documentoSchema.optional(),
   telefono: z.string().optional(),
+  country_code: z.string().max(6).optional(),
+  local_number: z.string().max(20).optional(),
   // Perfil médico flexible: N especialidades, colegiatura/licencia y firma.
   especialidad: z.string().max(100).optional(),
   especialidades: z.array(z.string().max(100)).max(10).optional(),
@@ -23,6 +25,8 @@ export const updateStaffSchema = z.object({
   nombre_completo: z.string().min(3).optional(),
   roles: z.array(roleEnum).min(1).optional(),
   telefono: z.string().optional(),
+  country_code: z.string().max(6).optional(),
+  local_number: z.string().max(20).optional(),
   cedula: documentoSchema.optional(),
   activo: z.boolean().optional(),
   especialidad: z.string().max(100).optional(),
@@ -62,6 +66,8 @@ export const configSchema = z.object({
   rif: z.string().max(30).optional(),
   direccion: z.string().max(300).optional().nullable(),
   telefono: z.string().max(40).optional().nullable(),
+  country_code: z.string().max(6).optional(),
+  local_number: z.string().max(20).optional(),
   logo_url: z.string().max(3_000_000).optional().nullable(),
   header_color: z
     .string()

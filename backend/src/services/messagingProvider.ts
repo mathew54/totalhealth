@@ -7,13 +7,22 @@ export interface SendMessageResult {
   devContent?: string;
 }
 
+/** Adjunto opcional para envíos con archivo (WhatsApp). */
+export interface MessageAdjunto {
+  tipo: 'image' | 'document';
+  data: Buffer;
+  mimetype?: string;
+  fileName?: string;
+  caption?: string;
+}
+
 /** Canal de mensajería abstracta (OTP, recordatorios). */
 export interface MessagingProvider {
   name: string;
   /** Envía un OTP a un teléfono/correo. */
   sendOtp(opts: { destino: string; codigo: string; canal: 'sms' | 'whatsapp' | 'email' }): Promise<SendMessageResult>;
   /** Envía un mensaje programático (recordatorio, resultado, domicilio). */
-  sendNotify(opts: { destino: string; canal: 'push' | 'sms' | 'whatsapp' | 'email'; mensaje: string }): Promise<SendMessageResult>;
+  sendNotify(opts: { destino: string; canal: 'push' | 'sms' | 'whatsapp' | 'email'; mensaje: string; adjuntos?: MessageAdjunto[] }): Promise<SendMessageResult>;
 }
 
 /** Proveedor de desarrollo: no envía nada, devuelve el contenido para depurar. */
@@ -84,10 +93,10 @@ class WhatsAppProvider implements MessagingProvider {
     return { provider: 'whatsapp', reference: id, devContent: opts.canal === 'sms' ? opts.codigo : undefined };
   }
 
-  async sendNotify(opts: { destino: string; canal: 'push' | 'sms' | 'whatsapp' | 'email'; mensaje: string }): Promise<SendMessageResult> {
+  async sendNotify(opts: { destino: string; canal: 'push' | 'sms' | 'whatsapp' | 'email'; mensaje: string; adjuntos?: MessageAdjunto[] }): Promise<SendMessageResult> {
     if (opts.canal === 'email') return new MockProvider().sendNotify({ ...opts });
     const { enviarWhatsApp } = await this.whatsapp();
-    const { id } = await enviarWhatsApp(opts.destino, opts.mensaje);
+    const { id } = await enviarWhatsApp(opts.destino, opts.mensaje, opts.adjuntos);
     return { provider: 'whatsapp', reference: id, devContent: opts.canal === 'push' ? opts.mensaje : undefined };
   }
 }

@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { formatearTelefono } from './phone'
 
 export interface FacturaPdfData {
   factura: {
@@ -46,7 +47,7 @@ export function descargarFacturaPdf(data: FacturaPdfData): void {
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(110)
   doc.text(`R.I.F. ${f.emisor.rif}`, margin, y + 5)
-  const contactoEmisor = [f.emisor.direccion && `Dir: ${f.emisor.direccion}`, f.emisor.telefono && `Tel: ${f.emisor.telefono}`]
+  const contactoEmisor = [f.emisor.direccion && `Dir: ${f.emisor.direccion}`, f.emisor.telefono && `Tel: ${formatearTelefono(f.emisor.telefono)}`]
     .filter(Boolean)
     .join(' · ')
   if (contactoEmisor) {

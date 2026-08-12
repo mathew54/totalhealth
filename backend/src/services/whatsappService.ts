@@ -245,8 +245,25 @@ export async function solicitarCodigoEmparejamiento(telefono: string): Promise<s
   return codigo;
 }
 
-/** Envía un mensaje de texto real. Throws si la sesión no está conectada. */
-export async function enviarWhatsApp(destino: string, mensaje: string): Promise<{ id: string; remoto: string }> {
+/** Adjunto multimedia para WhatsApp (imagen o documento). */
+export interface WhatsAppAdjunto {
+  tipo: 'image' | 'document';
+  data: Buffer;
+  mimetype?: string;
+  fileName?: string;
+  caption?: string;
+}
+
+/**
+ * Envía un mensaje de texto (y adjuntos opcionales) real. Cada adjunto se
+ * envía como mensaje independiente (imagen o documento con nombre). Throws si
+ * la sesión no está conectada.
+ */
+export async function enviarWhatsApp(
+  destino: string,
+  mensaje: string,
+  adjuntos: WhatsAppAdjunto[] = [],
+): Promise<{ id: string; remoto: string }> {
   await asegurarSesion();
   if (estado !== 'conectado') {
     await esperarEvento('open', 15_000).catch(() => {
@@ -255,8 +272,21 @@ export async function enviarWhatsApp(destino: string, mensaje: string): Promise<
   }
   if (estado !== 'conectado') throw new Error('WhatsApp no conectado. Vincula el dispositivo en Administración → Configuración.');
   const numero = normalizarNumeroWhatsApp(destino);
-  const res = await sock.sendMessage(`${numero}@s.whatsapp.net`, { text: mensaje });
-  return { id: res?.key?.id ?? 'unknown', remoto: res?.key?.remoteJid ?? `${numero}@s.whatsapp.net` };
+  const jid = `${numero}@s.whatsapp.net`;
+  let res = { key: { id: 'unknown', remoteJid: jid } };
+
+  if (mensaje) {
+    res = await sock.sendMessage(jid, { text: mensaje });
+  }
+  for (const adj of adjuntos) {
+    const content =
+      adj.tipo === 'image'
+        ? { image: adj.data, caption: adj.caption ?? '' }
+        : { document: adj.data, fileName: adj.fileName ?? 'archivo', mimetype: adj.mimetype ?? 'application/octet-stream', caption: adj.caption ?? '' };
+    res = await sock.sendMessage(jid, content);
+  }
+
+  return { id: res?.key?.id ?? 'unknown', remoto: res?.key?.remoteJid ?? jid };
 }
 
 /** Desvincula el dispositivo y borra la sesión local. */

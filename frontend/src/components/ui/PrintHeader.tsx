@@ -1,4 +1,5 @@
 import { useConfigStore } from '../../lib/configStore'
+import { formatearTelefono } from '../../lib/phone'
 
 /**
  * Cabecera de marca que se imprime en la parte superior de cualquier
@@ -14,7 +15,7 @@ export default function PrintHeader() {
         {rif && <p className="text-xs text-slate-500">R.I.F. {rif}</p>}
         {(direccion || telefono) && (
           <p className="text-xs text-slate-500">
-            {[direccion && `Dir: ${direccion}`, telefono && `Tel: ${telefono}`].filter(Boolean).join(' · ')}
+            {[direccion && `Dir: ${direccion}`, telefono && `Tel: ${formatearTelefono(telefono)}`].filter(Boolean).join(' · ')}
           </p>
         )}
       </div>

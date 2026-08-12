@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { formatearTelefono } from './phone'
 
 export interface PacientePdf {
   cedula: string
@@ -79,7 +80,7 @@ export async function descargarResultadoPdf(r: ResultadoPdf): Promise<void> {
   const nombre = r.branding?.razon_social || 'TotalHealth'
   const rif = r.branding?.rif || ''
   const direccion = r.branding?.direccion || ''
-  const telefono = r.branding?.telefono || ''
+  const telefono = formatearTelefono(r.branding?.telefono) || ''
   let logo: string | null = null
   if (r.branding?.logo_url) logo = await loadLogoDataUrl(r.branding.logo_url)
 

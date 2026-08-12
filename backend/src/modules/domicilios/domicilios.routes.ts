@@ -6,6 +6,7 @@ import { requireRole } from '../../middleware/rbac.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import { notificarDomicilio } from '../../services/notifier.js';
+import { telefonoDesdeBody, conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { crearDomicilioSchema, idParamSchema, actualizarDomicilioSchema, domicilioQuery } from './domicilios.validators.js';
 
 const router = Router();
@@ -25,7 +26,7 @@ router.get('/', validate(domicilioQuery, 'query'), async (_req, res, next) => {
     query = query.order('created_at', { ascending: false });
 
     const { data } = await query;
-    res.json(data ?? []);
+    res.json((data ?? []).map(conTelefonoSeparado));
   } catch (err) {
     next(err);
   }
@@ -47,7 +48,7 @@ router.post('/', validate(crearDomicilioSchema), async (req, res, next) => {
         paciente_id: body.paciente_id,
         solicitud_id: body.solicitud_id ?? null,
         direccion: body.direccion,
-        telefono: body.telefono ?? null,
+        telefono: telefonoDesdeBody(body),
         fecha_visita: body.fecha_visita ?? null,
         estado: body.estado ?? 'solicitada',
         notas: body.notas ?? null,
@@ -57,7 +58,7 @@ router.post('/', validate(crearDomicilioSchema), async (req, res, next) => {
       .single();
     if (error) return next(badRequest(error.message));
 
-    await notificarDomicilio({ pacienteId: body.paciente_id, direccion: body.direccion });
+    await notificarDomicilio({ pacienteId: body.paciente_id, direccion: body.direccion, fechaVisita: body.fecha_visita ?? null });
     res.status(201).json(data);
   } catch (err) {
     next(err);

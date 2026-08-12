@@ -71,6 +71,29 @@ que el socket estuviera conectado.
   (formato `XXXX-XXXX`) generados tras borrar la sesión corrupta; backend
   typecheck/72 tests OK; frontend typecheck OK.
 
+### Notificaciones con envío por WhatsApp y teléfonos E.164 (completado 2026-08-12)
+
+- [x] **Notificaciones automáticas despachadas por WhatsApp real** cuando
+  `MESSAGING_PROVIDER=whatsapp`: aviso **inmediato de resultado listo**
+  (`notificarResultadoListo` en `solicitudes.routes.ts`), recordatorios de
+  cita/turno/domicilio (`notifier.ts`) y OTP del portal. Sin dispositivo
+  vinculado el envío falla con error claro y la notificación queda `fallida`
+  (no se silencia).
+- [x] **Teléfonos E.164**: `services/phoneNumber.ts` (normalizar/separar/unir,
+  VE=+58) + migraciones `0026_notificaciones_envio.sql` y
+  `0027_telefono_e164.sql`; frontend `PhoneInput.tsx`, `lib/phone.ts`,
+  `lib/paises.ts`.
+- [x] **Seed demo**: paciente `V-19021231` (Andrés Salazar) con
+  `telefono: +584244458116` y consulta + solicitudes de laboratorio sin
+  resultado para probar el flujo de envío automático.
+- [x] **Tests aislados del proveedor**: `backend/vitest.config.ts` +
+  `backend/tests/setup.ts` fuerzan `mock` en la suite aunque el `.env` local
+  tenga `MESSAGING_PROVIDER=whatsapp`; 80 tests en verde + typecheck.
+- [x] **Servidor de prueba (Render)**: `MESSAGING_PROVIDER=whatsapp`,
+  `WHATSAPP_SESSION_DIR=.wa-session`, `WHATSAPP_PAIS_CODIGO=58`
+  (activado 2026-08-12). Pendiente de operación: **vincular el dispositivo**
+  en Admin → Configuración tras cada redeploy (disco efímero en Render free).
+
 ## Fase A — Valor inmediato (bajo/medio esfuerzo)
 
 - [x] QR/código seguro para compartir un resultado con un médico externo.

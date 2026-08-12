@@ -8,6 +8,9 @@
 > - **Backend**: https://totalhealth-backend.onrender.com (health: `/api/health`)
 > - **Repo**: https://github.com/mathew54/totalhealth
 > - Render creado por API: `runtime=node`, rootDir vacío, `npm ci --include=dev && npm run build -w backend`, start `npm run start -w backend`, plan free.
+>
+> Redespliegue 2026-08-12 (commit `619b76e`): módulo de notificaciones con **envío real por
+> WhatsApp** (teléfonos E.164). El backend de prueba quedó con `MESSAGING_PROVIDER=whatsapp`.
 
 ## Arquitectura
 
@@ -39,6 +42,14 @@
    - Mocks: se muestran con `import.meta.env.DEV` **o** `VITE_SHOW_MOCKS=true`.
    - `frontend/netlify.toml`: build raíz, publish `frontend/dist`, redirect SPA `/* → /index.html`.
 
+3. **Notificaciones con envío por WhatsApp** (commit `619b76e`, 2026-08-12):
+   - `services/notifier.ts` + `modules/notificaciones`: cola de recordatorios, envío de
+     pendientes, generación manual de recordatorios y **envío inmediato de resultados**.
+   - Proveedor `MESSAGING_PROVIDER=whatsapp`: OTP y recordatorios salen por el dispositivo
+     de la clínica (Baileys). Teléfonos normalizados a E.164 (`services/phoneNumber.ts`).
+   - **Aislamiento de tests**: `backend/vitest.config.ts` + `backend/tests/setup.ts` fuerzan
+     el proveedor `mock` en la suite aunque el `.env` local use `whatsapp` (80 tests en verde).
+
 ## Paso 1 — Backend (Render / Railway / Fly.io)
 
 1. Subir/desplegar el workspace `backend/` (comando de arranque: `npm run start`
@@ -53,13 +64,23 @@
    | `SUPABASE_URL` | *(vacía / omitida → fuerza modo mock)* |
    | `CORS_ORIGIN` | `https://TU-APP.netlify.app` (o `*` para pruebas) |
    | `PAYMENT_PROVIDER` | `mock` |
-   | `MESSAGING_PROVIDER` | `mock` |
+   | `MESSAGING_PROVIDER` | `whatsapp` (envío real de OTP/recordatorios por el dispositivo de la clínica; usa `mock` si no hay dispositivo vinculado) |
+   | `WHATSAPP_SESSION_DIR` | `.wa-session` (directorio de credenciales Baileys del dispositivo vinculado) |
+   | `WHATSAPP_PAIS_CODIGO` | `58` (código de país para normalizar teléfonos a E.164 sin `+`) |
    | `LOGIN_MAX_INTENTOS` | `5` (intentos fallidos antes de bloquear) |
    | `LOGIN_LOCK_MIN` | `15` (minutos de bloqueo al superar intentos) |
    | `FIELD_ENCRYPTION_KEY` | clave maestra AES-256-GCM para `telefono`/`firma_digital` (genera una fuerte; sin ella los campos van en claro) |
 
+> ⚠️ **WhatsApp real en Render free:** el disco es efímero, así que `.wa-session`
+> (la sesión Baileys) se pierde en cada redeploy/reinicio y hay que **re-vincular**
+> el dispositivo en Administración → Configuración. Para persistirla haría falta un
+> disco persistente (plan de pago) o guardar la sesión en Redis/DB.
+
 3. Verificar: `GET https://TU-BACKEND/api/health` → `{ status: "ok", mock: true }`
    y `GET https://TU-BACKEND/api/mocks` responde con credenciales demo.
+4. WhatsApp: con sesión de **admin**, `GET /api/admin/whatsapp` → `{estado}` y, si
+   `MESSAGING_PROVIDER=whatsapp`, vincular el dispositivo vía `POST /api/admin/whatsapp/qr`
+   (o `/pairing`) desde la app en Administración → Configuración.
 
 ## Paso 2 — Frontend (Netlify)
 

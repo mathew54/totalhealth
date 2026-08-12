@@ -10,6 +10,11 @@
 - **Frontend:** React + Vite + TypeScript. Rutas en `frontend/src/App.tsx`, pantallas en `frontend/src/features/`.
 - **Backend:** Node + Express + Supabase. Rutas montadas en `backend/src/routes/index.ts`, módulos en `backend/src/modules/`.
 - **Modo demo (mock):** por defecto el backend corre en modo mock (`USE_MOCK=true`) con datos de ejemplo en memoria; las credenciales demo se muestran en `/mocks`. En producción se usa Supabase real.
+- **Mensajería (WhatsApp):** los OTP del portal y los recordatorios/notificaciones
+  (citas, resultados, turnos, domicilios) se despachan por el proveedor configurado en
+  `MESSAGING_PROVIDER`: `mock` (dev: solo expone el contenido) o `whatsapp` (envío real,
+  vía el **dispositivo de la clínica** vinculado en Administración → Configuración). Sin
+  dispositivo vinculado el envío falla con error claro y la notificación queda `fallida`.
 - **Roles (RBAC):** `super_root`, `admin`, `medico`, `laboratorio`, `secretaria`. La matriz de navegación está en `frontend/src/lib/rbac.ts`.
 
 | Rol | Ámbito |
@@ -79,10 +84,18 @@
 - Roles: **secretaría, admin**.
 - Backend: `modules/turnos` (`GET/POST /turnos`, `PATCH estado`). La fecha se maneja en hora de **Caracas**.
 
-### 2.10 Recordatorios — `features/notificaciones` (`/notificaciones` → `NotificacionesPage.tsx`)
-**Objetivo:** Ver **recordatorios/citas** (whatsapp/email): pendientes por enviar y ya enviadas, con botón para disparar el envío manual.
+### 2.10 Recordatorios / Notificaciones — `features/notificaciones` (`/notificaciones` → `NotificacionesPage.tsx`)
+**Objetivo:** Cola de **notificaciones** (recordatorios): pendientes por enviar, ya enviadas y
+fallidas, pudiendo **crear una manual**, disparar el **envío de pendientes** (job) y **generar
+recordatorios** automáticamente según el estado de los datos (citas programadas, resultados por
+liberar, turnos del día y domicilios). El envío se hace por el proveedor de mensajería configurado
+(WhatsApp si `MESSAGING_PROVIDER=whatsapp`). El disparamo automático ocurre al agendar una cita
+(24 h y 1 h antes) y al subir un resultado de laboratorio (aviso inmediato al paciente con enlace
+a su portal).
 - Roles: **secretaría, admin**.
-- Backend: `modules/notificaciones` (`GET /notificaciones`, `POST /enviar-pendientes`), `services/notifier.ts` y `services/messagingProvider.ts`.
+- Backend: `modules/notificaciones` (`GET /notificaciones`, `POST /`, `POST /enviar-pendientes`,
+  `POST /generar-recordatorios`, `POST /limpiar-enviadas`), `services/notifier.ts` y
+  `services/messagingProvider.ts`.
 
 ### 2.11 Alertas clínicas — `features/alertas` (`/alertas` → `AlertasPage.tsx`)
 **Objetivo:** Configurar **umbrales de referencia** por examen (parámetro crítico min/max) y ver **alertas clínicas** generadas cuando un resultado está fuera de rango; marcarlas como leídas.
@@ -98,7 +111,10 @@
 - **Tasas de cambio:** ver/historial, crear manual, **escanear dolarapi/BCV** y seleccionar la tasa activa del día (USD/EUR).
 - **Reportería:** reportes de caja/cobranza en USD normalizado (`GET /admin/reporteria`).
 - **Auditoría:** log de acciones de los usuarios (`GET /admin/auditoria`).
-- **Configuración:** ajustes globales (branding/header/IVA) y validación global de seguridad.
+- **Configuración:** ajustes globales (branding/header/IVA) y **WhatsApp Business**: estado
+  del dispositivo (conectado o no, número vinculado), vinculación por **QR** o **código de
+  emparejamiento**, **mensaje de prueba** (texto y texto+archivo) y desvinculación
+  (`GET/POST /api/admin/whatsapp`, `/qr`, `/pairing`, `/test`, `/enviar-archivo`, `/logout`).
 - Roles: **admin, super_root**.
 - Backend: `modules/admin`, `modules/tasas`.
 
@@ -143,7 +159,8 @@ Backend: `modules/portal` (verificación por código/ OTP, resultados compartido
 | **laboratorio/reactivos** | Inventario de reactivos/consumibles | `GET/POST /reactivos`, `PATCH /reactivos/:id` |
 | **portal** | Portal del paciente (ver Sección 3) | `POST /generar-codigo`, `/verificar`, `mis-resultados`, `mis-pagos`, `catalogo`, `reservar`, `turnos-hoy`, etc. |
 | **config** | Configuración pública de la clínica (branding) | `GET /config` |
-| **notificaciones** | Recordatorios de citas (enviar pendientes) | `GET /notificaciones`, `POST /enviar-pendientes` |
+| **notificaciones** | Cola y envío de recordatorios (citas, resultados, turnos, domicilios) | `GET /notificaciones`, `POST /`, `POST /enviar-pendientes`, `POST /generar-recordatorios`, `POST /limpiar-enviadas` |
+| **whatsapp** (admin) | WhatsApp de la clínica: estado, QR, emparejamiento, prueba, desvincular | `GET/POST /admin/whatsapp`, `/qr`, `/pairing`, `/test`, `/enviar-archivo`, `/logout` |
 | **domicilios** | **Tomas de muestras a domicilio** | `GET/POST /domicilios`, `PATCH /domicilios/:id` |
 | **turnos** | Cola/sala de espera por día | `GET/POST /turnos`, `PATCH /turnos/:id/estado` |
 | **familia** | Vínculos familiares (responsable/hijos) | `GET/POST /familia`, `DELETE /familia/:id` |
@@ -167,4 +184,8 @@ Backend: `modules/portal` (verificación por código/ OTP, resultados compartido
 
 ## 6. Notas y pendientes conocidos
 - El smoke test (`backend/scripts/smoke.ts`) reporta fallos **preexistentes** ajenos a la moneda: las rutas de cuestionarios se montan en `/api/historial/...` y el smoke intenta `/api/cuestionarios` (404), y el flujo de subida de resultados depende de la config de **pre-analítica** (se consulta en `app_config`).
+- **Notificaciones por WhatsApp:** requieren el dispositivo vinculado en Admin → Configuración
+  y `MESSAGING_PROVIDER=whatsapp`. En Render free (disco **efímero**) la sesión `.wa-session` se
+  pierde en cada redeploy/reinicio → hay que re-vincular. Sin dispositivo vinculado los envíos
+  quedan `fallida` con "WhatsApp no conectado".
 - Revisar `pendientes.md`, `propuesta.md`, `SPEC.md` y `DEPLOY.md` para visión de producto y despliegue.

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import CuestionarioWizard, { type ModuloCuestionario, type Respuestas } from '../cuestionario/CuestionarioWizard'
+import { portalFetch } from './portalApi'
 
 interface Definicion {
   modulos: ModuloCuestionario[]
@@ -21,17 +22,6 @@ interface Datos {
   cuestionarios: Cuest[]
 }
 
-async function fetchJSON(path: string, token: string, body?: unknown) {
-  const res = await fetch(`/api/portal${path}`, {
-    method: body ? 'POST' : 'GET',
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const data = await res.json().catch(() => null)
-  if (!res.ok) throw new Error(data?.message ?? 'Error')
-  return data
-}
-
 export default function MiCuestionario({ token }: { token: string }) {
   const [def, setDef] = useState<Definicion | null>(null)
   const [datos, setDatos] = useState<Datos | null>(null)
@@ -41,14 +31,14 @@ export default function MiCuestionario({ token }: { token: string }) {
 
   const recargar = useCallback(async () => {
     try {
-      setDatos(await fetchJSON('/mi-cuestionario', token))
+      setDatos(await portalFetch('/mi-cuestionario', token))
     } catch (e) {
       setError((e as Error).message)
     }
   }, [token])
 
   useEffect(() => {
-    fetchJSON('/cuestionario-definicion', token)
+    portalFetch('/cuestionario-definicion', token)
       .then((d) => setDef({ modulos: d.modulos, cierre: d.cierre }))
       .catch((e) => setError((e as Error).message))
     recargar()
@@ -58,7 +48,7 @@ export default function MiCuestionario({ token }: { token: string }) {
     setError(null)
     setMsg(null)
     try {
-      await fetchJSON('/mi-cuestionario', token, { respuestas })
+      await portalFetch('/mi-cuestionario', token, { respuestas })
       setMsg('Cuestionario guardado. El personal médico lo revisará en tu próxima consulta.')
       setVerId(null)
       recargar()

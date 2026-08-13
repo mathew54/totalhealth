@@ -6,6 +6,7 @@ import PrintHeader from '../../components/ui/PrintHeader'
 import TasaHeader from '../../components/TasaHeader'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd } from '../../lib/moneda'
+import { portalFetch } from './portalApi'
 
 const Evolucion = lazy(() => import('./Evolucion'))
 const CompartirModal = lazy(() => import('./CompartirModal'))
@@ -80,17 +81,6 @@ interface PortalSession {
 }
 
 const STORE_KEY = 'totalhealth-portal'
-
-async function portalFetch(path: string, token?: string, body?: unknown, method: 'GET' | 'POST' | 'PATCH' = body ? 'POST' : 'GET') {
-  const res = await fetch(`/api/portal${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const data = await res.json().catch(() => null)
-  if (!res.ok) throw new Error(data?.message ?? 'Error')
-  return data
-}
 
 export default function PortalPage() {
   const navigate = useNavigate()

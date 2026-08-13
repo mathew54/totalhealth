@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useConfigStore } from '../../lib/configStore'
+import { portalFetch } from './portalApi'
 
 interface TurnoPublico {
   numero: number
@@ -17,10 +18,7 @@ export default function PantallaTurnos() {
 
   async function cargar() {
     try {
-      const res = await fetch('/api/portal/turnos-hoy')
-      const data = await res.json().catch(() => null)
-      if (!res.ok) throw new Error(data?.message ?? 'Error')
-      setTurnos(data ?? [])
+      setTurnos((await portalFetch('/turnos-hoy')) ?? [])
       setError(null)
     } catch (e) {
       setError((e as Error).message)

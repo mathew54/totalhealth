@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { portalFetch } from './portalApi'
 
 interface Medico {
   id: string
@@ -22,17 +23,6 @@ interface Reserva {
   medico: { id: string; nombre_completo: string; especialidad: string | null } | null
 }
 
-async function fetchJSON(path: string, token: string, body?: unknown, method: 'GET' | 'POST' | 'PATCH' = body ? 'POST' : 'GET') {
-  const res = await fetch(`/api/portal${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const data = await res.json().catch(() => null)
-  if (!res.ok) throw new Error(data?.message ?? 'Error')
-  return data
-}
-
 export default function Reservas({ token }: { token: string }) {
   const [misReservas, setMisReservas] = useState<Reserva[] | null>(null)
   const [medicos, setMedicos] = useState<Medico[]>([])
@@ -48,7 +38,7 @@ export default function Reservas({ token }: { token: string }) {
 
   const recargar = useCallback(async () => {
     try {
-      setMisReservas(await fetchJSON('/mis-reservas', token))
+      setMisReservas(await portalFetch('/mis-reservas', token))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -56,7 +46,7 @@ export default function Reservas({ token }: { token: string }) {
 
   useEffect(() => {
     Promise.all([
-      fetchJSON('/medicos', token).then(setMedicos),
+      portalFetch('/medicos', token).then(setMedicos),
       recargar(),
     ]).catch((e) => setError((e as Error).message))
   }, [token, recargar])
@@ -67,7 +57,7 @@ export default function Reservas({ token }: { token: string }) {
       return
     }
     setLoading(true)
-    fetchJSON(`/disponibilidad?medico_id=${encodeURIComponent(medicoId)}&fecha=${fecha}`, token)
+    portalFetch(`/disponibilidad?medico_id=${encodeURIComponent(medicoId)}&fecha=${fecha}`, token)
       .then((d) => {
         setSlots(d.slots ?? [])
         setSlotSel('')
@@ -80,7 +70,7 @@ export default function Reservas({ token }: { token: string }) {
     if (!medicoId || !slotSel) return
     setError(null); setMsg(null)
     try {
-      await fetchJSON('/reservar', token, { medico_id: medicoId, fecha_hora: slotSel, motivo: motivo || undefined })
+      await portalFetch('/reservar', token, { medico_id: medicoId, fecha_hora: slotSel, motivo: motivo || undefined })
       setMsg('Consulta reservada con éxito. Te enviaremos recordatorios.')
       setSlots(null); setSlotSel(''); setMotivo('')
       await recargar()
@@ -184,7 +174,7 @@ function ReservaCard({ r, token, onChanged }: { r: Reserva; token: string; onCha
   async function cancelar() {
     setError(null); setMsg(null)
     try {
-      await fetchJSON(`/reservas/${r.id}/cancelar`, token, {})
+      await portalFetch(`/reservas/${r.id}/cancelar`, token, {})
       setMsg('Cita cancelada.')
       onChanged()
     } catch (e) {
@@ -195,7 +185,7 @@ function ReservaCard({ r, token, onChanged }: { r: Reserva; token: string; onCha
   async function reprogramar() {
     setError(null); setMsg(null)
     try {
-      await fetchJSON(`/reservas/${r.id}/reprogramar`, token, { fecha_hora: new Date(fechaHora).toISOString() }, 'PATCH')
+      await portalFetch(`/reservas/${r.id}/reprogramar`, token, { fecha_hora: new Date(fechaHora).toISOString() }, 'PATCH')
       setMsg('Cita reprogramada.')
       onChanged()
     } catch (e) {

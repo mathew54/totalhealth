@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { resumenDeResultado } from '../../lib/pdf'
 import PreviewResultado from './PreviewResultado'
+import { portalFetch } from './portalApi'
 
 interface Publico {
   resultado_id: string
@@ -21,13 +22,8 @@ export default function ResultadoCompartido() {
   useEffect(() => {
     if (!token) return
     let activo = true
-    fetch(`/api/portal/compartido/${encodeURIComponent(token)}`)
-      .then(async (res) => {
-        const d = await res.json().catch(() => null)
-        if (!res.ok) throw new Error(d?.message ?? 'No se pudo cargar el resultado')
-        return d as Publico
-      })
-      .then((d) => activo && setData(d))
+    portalFetch(`/compartido/${encodeURIComponent(token)}`)
+      .then((d) => activo && setData(d as Publico))
       .catch((e) => activo && setError((e as Error).message))
     return () => {
       activo = false

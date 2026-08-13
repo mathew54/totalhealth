@@ -22,6 +22,7 @@ const NotificacionesPage = lazy(() => import('./features/notificaciones/Notifica
 const AlertasPage = lazy(() => import('./features/alertas/AlertasPage'))
 const ImagenesPage = lazy(() => import('./features/imagenes/ImagenesPage'))
 const HistorialPage = lazy(() => import('./features/historial/HistorialPage'))
+const ExpedientePage = lazy(() => import('./features/expediente/ExpedientePage'))
 const MocksPage = lazy(() => import('./features/mocks/MocksPage'))
 
 function Protected({ children }: { children: ReactNode }) {
@@ -55,6 +56,7 @@ function AppRoutes() {
         <Route path="/notificaciones" element={<NotificacionesPage />} />
         <Route path="/alertas" element={<AlertasPage />} />
         <Route path="/historial" element={<HistorialPage />} />
+        <Route path="/expediente" element={<ExpedientePage />} />
         <Route path="/imagenes" element={<ImagenesPage />} />
         <Route path="/pagos" element={<PagosPage />} />
         <Route path="/admin" element={<AdminPage />} />

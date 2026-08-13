@@ -47,6 +47,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Recordatorios', path: '/notificaciones', roles: ['secretaria', 'admin'] },
   { label: 'Alertas clínicas', path: '/alertas', roles: ['laboratorio', 'admin'] },
   { label: 'Historial médico', path: '/historial', roles: ['medico', 'secretaria', 'admin', 'super_root'] },
+  { label: 'Expediente', path: '/expediente', roles: ['medico', 'admin', 'super_root'] },
   { label: 'Imágenes', path: '/imagenes', roles: ['medico', 'laboratorio', 'secretaria', 'admin'] },
   { label: 'Caja', path: '/pagos', roles: ['secretaria', 'admin'] },
   { label: 'Administración', path: '/admin', roles: ['admin', 'super_root'] },

@@ -65,24 +65,37 @@ router.get('/', validate(searchPacientesQuery, 'query'), async (req, res, next) 
     let pacientes = (rows ?? []).filter((p) => !p.deleted_at);
 
     const ql = q.trim().toLowerCase();
+    // Sólo tiene sentido buscar por teléfono si la query contiene dígitos.
+    const qDigitos = ql.replace(/\D/g, '');
     if (ql) {
-      // Resolver representantes para permitir buscar menores por la cédula/nombre de su representante.
+      // Resolver representantes para permitir buscar menores por la cédula/nombre/teléfono de su representante.
       const representanteIds = [...new Set(pacientes.map((p) => p.representante_id as string).filter(Boolean))];
       const representantes = new Map<string, Row>();
       if (representanteIds.length) {
         const { data: reps } = await getSupabase()
           .from('pacientes')
-          .select('id, cedula, nombre_completo')
+          .select('id, cedula, nombre_completo, telefono')
           .in('id', representanteIds);
         for (const r of reps ?? []) representantes.set(r.id as string, r);
       }
+
+      /** Descifra y normaliza un teléfono a dígitos para comparación parcial. */
+      const normalizaTelefono = (v: unknown): string => {
+        const claro = decryptCampo(v as string | null | undefined);
+        return claro ? String(claro).replace(/\D/g, '') : '';
+      };
+
       pacientes = pacientes.filter((p) => {
         const rep = representantes.get(p.representante_id as string);
+        const telPaciente = qDigitos ? normalizaTelefono(p.telefono) : '';
+        const telRep = qDigitos && rep ? normalizaTelefono(rep.telefono) : '';
         return (
           String(p.cedula ?? '').toLowerCase().includes(ql) ||
           String(p.nombre_completo ?? '').toLowerCase().includes(ql) ||
+          (qDigitos.length > 0 && telPaciente.includes(qDigitos)) ||
           String(rep?.cedula ?? '').toLowerCase().includes(ql) ||
-          String(rep?.nombre_completo ?? '').toLowerCase().includes(ql)
+          String(rep?.nombre_completo ?? '').toLowerCase().includes(ql) ||
+          (qDigitos.length > 0 && telRep.includes(qDigitos))
         );
       });
     }

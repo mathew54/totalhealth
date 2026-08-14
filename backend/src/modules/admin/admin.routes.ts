@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, forbidden } from '../../utils/httpError.js';
 import { normalizeDocumento } from '../pacientes/pacientes.validators.js';
@@ -15,7 +16,7 @@ import { telefonoDesdeBody, conTelefonoSeparado } from '../../services/phoneNumb
 
 const router = Router();
 
-router.use(authRequired, requireRole('admin', 'super_root'));
+router.use(authRequired, requireRole(...ROLES_ADMIN_SUPER));
 
 /** Descifra los campos sensibles de un perfil (telefono, firma_digital) y expone
  * el teléfono como E.164 + piezas separadas (country_code / local_number). */

@@ -49,7 +49,7 @@ export default function StaffLayout() {
   return (
     <div className="flex min-h-screen bg-slate-50">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 transform bg-slate-900 text-slate-100 transition-transform lg:static lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`print:hidden fixed inset-y-0 left-0 z-40 w-64 transform bg-slate-900 text-slate-100 transition-transform lg:static lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="flex h-16 items-center justify-between border-b border-slate-700 px-4" style={headerStyle}>
           <span className="flex min-w-0 items-center gap-2">
@@ -167,7 +167,7 @@ export default function StaffLayout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 items-center justify-between px-4 lg:hidden" style={headerStyle}>
+        <header className="print:hidden flex h-16 items-center justify-between px-4 lg:hidden" style={headerStyle}>
           <button className="text-xl" onClick={() => setMobileOpen(true)} aria-label="Abrir menú">
             ☰
           </button>

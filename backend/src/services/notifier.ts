@@ -157,10 +157,16 @@ export async function enviarNotificacionesPendientes(opts: { ids?: string[] } = 
   let query = getSupabase()
     .from('notificaciones')
     .select('id')
-    .eq('estado', 'pendiente')
-    .lte('programada_para', ahora);
+    .eq('estado', 'pendiente');
 
-  if (opts.ids && opts.ids.length) query = query.in('id', opts.ids);
+  if (opts.ids && opts.ids.length) {
+    // Envío explícito desde la UI ("enviar ahora"): se respeta el lote elegido
+    // aunque la fecha programada aún no haya llegado.
+    query = query.in('id', opts.ids);
+  } else {
+    // Job automático (cron): solo las que ya vencieron.
+    query = query.lte('programada_para', ahora);
+  }
 
   const { data: pendientes } = await query;
   const ids = (pendientes ?? []).map((r) => r.id as string);
@@ -250,19 +256,20 @@ export async function crearNotificacionPendiente(opts: {
 /*  Recordatorios específicos (diparados por eventos de negocio)               */
 /* -------------------------------------------------------------------------- */
 
-/** Agenda un recordatorio de cita (ej. 1 h antes). */
+/** Agenda un recordatorio de cita (ej. 1 h antes). Devuelve cuántos creó. */
 export async function recordatorioCita(opts: {
   pacienteId: string;
   nombre: string;
   fechaHora: string;
   medicos: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<number> {
   const fecha = new Date(opts.fechaHora);
   const recordatorios = [
     new Date(fecha.getTime() - 24 * 3600 * 1000),
     new Date(fecha.getTime() - 60 * 60 * 1000),
   ];
+  let creados = 0;
   for (const cuando of recordatorios) {
     if (cuando.getTime() <= Date.now()) continue;
     await agendarNotificacion({
@@ -272,7 +279,9 @@ export async function recordatorioCita(opts: {
       programadaPara: cuando.toISOString(),
       metadata: { fecha_cita: opts.fechaHora, ...opts.metadata },
     });
+    creados += 1;
   }
+  return creados;
 }
 
 /**
@@ -369,14 +378,16 @@ export async function generarRecordatoriosManuales(): Promise<Record<string, num
         ? getSupabase().from('profiles').select('nombre_completo').eq('id', cita.medico_id).maybeSingle()
         : Promise.resolve({ data: {} as { nombre_completo?: string } | null }),
     ]);
-    await recordatorioCita({
+    const creadas = await recordatorioCita({
       pacienteId: cita.paciente_id,
       nombre: (paciente?.nombre_completo as string) ?? 'Paciente',
       fechaHora: cita.fecha_hora as string,
       medicos: (medico?.nombre_completo as string) ?? 'el médico',
       metadata: { consulta_id: cita.id },
     });
-    resumen.citas = (resumen.citas ?? 0) + 1;
+    // Solo se cuenta la cita si realmente se generó al menos un recordatorio
+    // (una cita muy próxima puede tener ambas ventanas ya vencidas).
+    if (creadas > 0) resumen.citas = (resumen.citas ?? 0) + 1;
   }
 
   // 2) Líneas de solicitud con resultado → aviso por cada examen (igual que el

@@ -1,7 +1,15 @@
 import { jsPDF } from 'jspdf'
-import { formatearTelefono } from './phone'
+import { dibujarCabeceraMarca, type Branding } from './pdf'
 
-export interface FacturaPdfData {
+export interface FacturaLinea {
+  descripcion: string
+  cantidad: number
+  precio: number
+  precio_iva: number
+}
+
+/** Respuesta de GET /api/pagos/:id/factura (y datos para el PDF). */
+export interface FacturaResp {
   factura: {
     serie: string
     control: string
@@ -10,7 +18,7 @@ export interface FacturaPdfData {
     receptor: { nombre: string; cedula: string | null }
     fecha: string
     moneda: string
-    lineas: { descripcion: string; cantidad: number; precio: number; precio_iva: number }[]
+    lineas: FacturaLinea[]
     base: number
     iva: number
     monto: number
@@ -25,6 +33,8 @@ export interface FacturaPdfData {
   monto_usd?: number | null
 }
 
+export type FacturaPdfData = FacturaResp
+
 function formatearMoneda(moneda: string, n: number): string {
   return `${moneda === 'USD' ? '$' : 'Bs. '}${n.toFixed(2)}`
 }
@@ -32,41 +42,33 @@ function formatearMoneda(moneda: string, n: number): string {
 /**
  * Genera y descarga el comprobante/recibo/factura fiscal (VE) en PDF.
  */
-export function descargarFacturaPdf(data: FacturaPdfData): void {
+export async function descargarFacturaPdf(data: FacturaPdfData): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const margin = 16
   const width = 210 - margin * 2
   const f = data.factura
 
   let y = 16
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(40)
-  doc.text(f.emisor.razon_social, margin, y)
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(110)
-  doc.text(`R.I.F. ${f.emisor.rif}`, margin, y + 5)
-  const contactoEmisor = [f.emisor.direccion && `Dir: ${f.emisor.direccion}`, f.emisor.telefono && `Tel: ${formatearTelefono(f.emisor.telefono)}`]
-    .filter(Boolean)
-    .join(' · ')
-  if (contactoEmisor) {
-    doc.text(doc.splitTextToSize(contactoEmisor, width) as string, margin, y + 10)
+  const branding: Branding = {
+    razon_social: f.emisor.razon_social,
+    rif: f.emisor.rif,
+    direccion: f.emisor.direccion,
+    telefono: f.emisor.telefono,
   }
+  y = await dibujarCabeceraMarca(doc, branding, margin, y)
 
-  // Tributo / control
+  // Tributo / control (derecha, dentro de la banda de la cabecera)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
   doc.setTextColor(139, 92, 246)
   const titulo = f.tipo === 'factura' ? 'FACTURA' : f.tipo === 'recibo' ? 'RECIBO DE PAGO' : 'COMPROBANTE'
-  doc.text(titulo, margin + width - doc.getTextWidth(titulo), y)
+  doc.text(titulo, margin + width - doc.getTextWidth(titulo), y - 12)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(80)
-  doc.text(`Serie: ${f.serie}`, margin + width - doc.getTextWidth(`Serie: ${f.serie}`), y - 7)
-  doc.text(`N° de control: ${f.control}`, margin + width - doc.getTextWidth(`N° de control: ${f.control}`), y - 3)
+  doc.text(`Serie: ${f.serie}`, margin + width - doc.getTextWidth(`Serie: ${f.serie}`), y - 8)
+  doc.text(`N° de control: ${f.control}`, margin + width - doc.getTextWidth(`N° de control: ${f.control}`), y - 4)
 
-  y += 16
   doc.setDrawColor(200)
   doc.setLineWidth(0.3)
   doc.line(margin, y, 210 - margin, y)
@@ -120,7 +122,7 @@ export function descargarFacturaPdf(data: FacturaPdfData): void {
   doc.text('Base imponible', labelX, y)
   doc.text(formatearMoneda(moneda, f.base), totalX, y, { align: 'right' })
   y += 6
-  doc.text(`IVA (16%)`, labelX, y)
+  doc.text(`IVA (${Math.round(data.iva * 100)}%)`, labelX, y)
   doc.text(formatearMoneda(moneda, data.iva), totalX, y, { align: 'right' })
   y += 6
   if (data.descuento > 0) {

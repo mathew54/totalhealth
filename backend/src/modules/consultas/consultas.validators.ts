@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+export { idParamSchema } from '../../utils/schemas.js';
 
 export const createConsultaSchema = z.object({
   paciente_id: z.string().uuid('Paciente inválido'),
@@ -9,6 +9,15 @@ export const createConsultaSchema = z.object({
   motivo: z.string().max(500).optional(),
   notas: z.string().max(2000).optional(),
 });
+
+export const actualizarConsultaSchema = z
+  .object({
+    medico_id: z.string().uuid().optional(),
+    fecha_hora: z.string().datetime('Fecha/hora inválida').optional(),
+    motivo: z.string().max(500).optional(),
+    notas: z.string().max(2000).optional().nullable(),
+  })
+  .refine((b) => Object.keys(b).length > 0, { message: 'No hay campos para actualizar' });
 
 export const diagnosticoSchema = z.object({
   diagnostico: z.string().min(2, 'Diagnóstico requerido'),

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, conflict, notFound, forbidden } from '../../utils/httpError.js';
 import type { AuthUser } from '../auth/types.js';
@@ -21,7 +22,7 @@ const router = Router();
 router.use(authRequired);
 
 const ESCRIBIR_PACIENTE = requireRole('medico', 'secretaria', 'admin', 'super_root');
-const ELIMINAR_PACIENTE = requireRole('admin', 'super_root');
+const ELIMINAR_PACIENTE = requireRole(...ROLES_ADMIN_SUPER);
 
 const PACIENTE_COLS = 'id, cedula, tipo_documento, nombre_completo, fecha_nacimiento, telefono, email, direccion, sexo, es_menor, representante_id, parentesco_representante, fecha_consentimiento, deleted_at, created_at';
 

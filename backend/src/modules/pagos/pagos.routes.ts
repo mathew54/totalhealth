@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_SECRETARIA_ADMIN } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, conflict, notFound } from '../../utils/httpError.js';
 import { getPaymentProvider } from '../../services/paymentProvider.js';
 import { construirFactura, montoTexto } from '../../services/invoice.js';
+import { obtenerIvaPorcentaje, IVA_DEFECTO } from '../../services/configService.js';
 import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { obtenerTasaUsdActiva, obtenerTasasActivas, usdABs, bsAUsd, montoAUsd } from '../../services/moneda.js';
 import {
@@ -18,19 +20,20 @@ import {
 } from './pagos.validators.js';
 
 const router = Router();
-router.use(authRequired, requireRole('secretaria', 'admin', 'super_root'));
+router.use(authRequired, requireRole(...ROLES_SECRETARIA_ADMIN));
 
 const PAGO_COLS =
   'id, tipo, solicitud_id, consulta_id, paciente_id, monto, moneda, tasa_usd, descuento, iva, metodo, secretaria_id, fecha, estado, provider, provider_ref';
 
 /**
- * Convierte un monto neto + descuento (base USD) en base/imponible con IVA (16%).
+ * Convierte un monto neto + descuento (base USD) en base/imponible con IVA.
+ * El porcentaje de IVA viene de app_config (parametrizable); default 0.16.
  * Devuelve los valores en USD; cuando el cobro es en Bs. se convierten con la tasa.
  */
-function desglosar(total: number, descuento: number) {
+function desglosar(total: number, descuento: number, iva = IVA_DEFECTO) {
   const neto = Math.max(0, total - descuento);
-  const iva = Number((neto * 0.16).toFixed(2));
-  return { neto: Number(neto.toFixed(2)), iva, monto: Number((neto + iva).toFixed(2)) };
+  const ivaMonto = Number((neto * iva).toFixed(2));
+  return { neto: Number(neto.toFixed(2)), iva: ivaMonto, monto: Number((neto + ivaMonto).toFixed(2)) };
 }
 
 /** Aplica la conversión de un desglose USD a Bs. (o devuelve el mismo en USD). */
@@ -89,7 +92,7 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       }
     }
 
-    const desgloseUsd = desglosar(totalUsd, descuento);
+    const desgloseUsd = desglosar(totalUsd, descuento, await obtenerIvaPorcentaje());
     const desglose = convertirDesglose(desgloseUsd, moneda, tasaUsd);
     if (!desglose) return next(badRequest('No hay tasa de cambio del día para convertir a Bs.'));
     const { neto, iva, monto } = desglose;
@@ -324,7 +327,8 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
       neto: Number((c.neto - (c.neto / montoLineas) * descuentoAplicado).toFixed(2)),
     }));
     const base = Number(conceptos.reduce((acc, c) => acc + c.neto, 0).toFixed(2));
-    const iva = Number(pago.iva ?? Number((base * 0.16).toFixed(2)));
+    const ivaConfig = await obtenerIvaPorcentaje();
+    const iva = Number(pago.iva ?? Number((base * ivaConfig).toFixed(2)));
     const monto = Number((base + iva).toFixed(2));
 
     const factura = construirFactura({
@@ -344,6 +348,7 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
       conceptos,
       serie: `TH-${Number.isNaN(fechaPago.getFullYear()) ? new Date().getFullYear() : fechaPago.getFullYear()}`,
       control: String(pago.id as string).slice(0, 8).toUpperCase(),
+      iva: ivaConfig,
     });
 
     // Monto equivalente en USD (base) para mostrar la equivalencia en el PDF.

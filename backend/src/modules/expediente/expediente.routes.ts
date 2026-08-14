@@ -4,13 +4,15 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { MEDICO_ROLES } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
-import { notFound } from '../../utils/httpError.js';
+import { forbidden, notFound } from '../../utils/httpError.js';
 import {
   casoSchema,
   evolucionSchema,
   idParamSchema,
   notaPrivadaSchema,
+  notaUpdateSchema,
   pacienteIdQuerySchema,
   tutorIdQuerySchema,
 } from './expediente.validators.js';
@@ -26,7 +28,7 @@ import {
 const router = Router();
 router.use(authRequired);
 
-const MEDICO = requireRole('medico', 'admin', 'super_root');
+const MEDICO = requireRole(...MEDICO_ROLES);
 const CPOE = requireRole('medico', 'secretaria', 'admin', 'super_root');
 
 const EVOLUCION_COLS = 'id, paciente_id, medico_id, especialidad_id, subjetivo, objetivo, evaluacion, plan, signos_vitales, especialidad_data, created_at';
@@ -159,6 +161,32 @@ router.delete('/notas/:id', MEDICO, validate(idParamSchema, 'params'), async (re
     if (!existente) return next(notFound('Nota no encontrada'));
     await getSupabase().from('notas_privadas').delete().eq('id', id);
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PATCH /api/expediente/notas/:id — edita la nota privada (autor o super_root). */
+router.patch('/notas/:id', MEDICO, validate(idParamSchema, 'params'), async (req, res, next) => {
+  try {
+    const { id } = req.params as z.infer<typeof idParamSchema>;
+    const body = notaUpdateSchema.parse(req.body);
+    const { data: existente } = await getSupabase()
+      .from('notas_privadas')
+      .select('id, medico_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (!existente) return next(notFound('Nota no encontrada'));
+    if (existente.medico_id !== req.user!.id && req.user!.role !== 'super_root') {
+      return next(forbidden('Solo el autor de la nota puede editarla'));
+    }
+    const { data } = await getSupabase()
+      .from('notas_privadas')
+      .update({ contenido: body.contenido, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select(NOTA_COLS)
+      .single();
+    res.json(data ?? null);
   } catch (err) {
     next(err);
   }

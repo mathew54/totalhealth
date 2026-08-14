@@ -5,6 +5,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
 import PhoneInput from '../../components/ui/PhoneInput'
 import { formatearTelefono } from '../../lib/phone'
+import type { Paciente } from '../../lib/types'
 
 type TipoDocumento = 'V' | 'E' | 'J' | 'P' | 'C'
 
@@ -15,25 +16,6 @@ const TIPOS_DOCUMENTO: { value: TipoDocumento; label: string }[] = [
   { value: 'P', label: 'P — Pasaporte' },
   { value: 'C', label: 'C — Cédula extranjero' },
 ]
-
-interface Paciente {
-  id: string
-  cedula: string | null
-  tipo_documento: string | null
-  nombre_completo: string
-  telefono: string | null
-  country_code?: string | null
-  local_number?: string | null
-  email: string | null
-  direccion: string | null
-  sexo: 'M' | 'F' | null
-  fecha_nacimiento: string | null
-  es_menor: boolean
-  representante_id: string | null
-  parentesco_representante: string | null
-  fecha_consentimiento: string | null
-  historial?: { total_consultas: number }
-}
 
 export default function PacientesPage() {
   const queryClient = useQueryClient()

@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import PrintHeader from '../../components/ui/PrintHeader'
 import PhoneInput from '../../components/ui/PhoneInput'
+import type { Paciente } from '../../lib/types'
 
 interface Domicilio {
   id: string
@@ -15,12 +16,6 @@ interface Domicilio {
   ubicacion?: string | { lat: number; lng: number } | null
   notas: string | null
   created_at: string
-}
-
-interface Paciente {
-  id: string
-  cedula: string
-  nombre_completo: string
 }
 
 const ESTADOS: { value: Domicilio['estado']; label: string; ops: Domicilio['estado'][] }[] = [

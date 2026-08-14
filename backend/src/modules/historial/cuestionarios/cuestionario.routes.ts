@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { getSupabase } from '../../../config/supabase.js';
@@ -6,6 +5,9 @@ import { requireRole } from '../../../middleware/rbac.js';
 import { validate } from '../../../middleware/validate.js';
 import { badRequest, conflict, forbidden, notFound, unauthorized } from '../../../utils/httpError.js';
 import { registrarAuditoria, ipDeRequest } from '../../../services/auditoria.js';
+import { MEDICO_ROLES, ROLES_ADMIN_SUPER } from '../../../roles.js';
+import { firmaHash } from '../../../services/firma.js';
+import { resolverNombres } from '../../../services/resolverNombres.js';
 import { MODULOS_CUESTIONARIO, OBSERVACIONES_MODULO, normalizarRespuestas, respuestasVacias, OBSERVACIONES_KEY } from './definicion.js';
 import { pacienteIdParamSchema } from '../historial.validators.js';
 import {
@@ -23,27 +25,9 @@ import {
 
 const router = Router();
 
-const MEDICO_ROLES = ['medico', 'admin', 'super_root'] as const;
 const ESCRITURA = requireRole(...MEDICO_ROLES);
 
 const CUESTIONARIO_COLS = 'id, clinica_id, paciente_id, consulta_id, origen, creado_por_paciente, creado_por_medico, titulo, estado, respuestas, consolidado_at, deleted_at, created_at, updated_at';
-
-function firmaHash(medicoId: string, marca: string, contenido: unknown): string {
-  return createHash('sha256').update(`${medicoId}:${marca}:${JSON.stringify(contenido ?? {})}`).digest('hex').slice(0, 32);
-}
-
-/** Resuelve nombres para tablas con `id` + `nombre_completo`. */
-async function resolverNombres(tabla: 'pacientes' | 'profiles', ids: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (!ids.length) return map;
-  const col = tabla === 'pacientes' ? 'nombre_completo' : 'nombre_completo';
-  const { data } = await getSupabase().from(tabla).select(`id, ${col}` as never);
-  for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
-    const key = r.id;
-    if (key != null) map.set(String(key), String(r[col] ?? ''));
-  }
-  return map;
-}
 
 /** Verifica que el paciente pertenezca a la clínica del staff (si aplica). */
 async function pacienteEnClinica(pacienteId: string, clinicaId: string | null): Promise<boolean> {
@@ -85,8 +69,8 @@ router.get('/pacientes/:id/cuestionarios', validate(pacienteIdParamSchema, 'para
     const pacienteIds = [...new Set(rows.map((c) => c.paciente_id as string))];
     const perfilesIds = [...new Set(rows.map((c) => c.creado_por_medico).filter(Boolean) as string[])];
     const [pacientes, medicos] = await Promise.all([
-      resolverNombres('pacientes', pacienteIds),
-      resolverNombres('profiles', perfilesIds),
+      resolverNombres('pacientes', pacienteIds, 'id', 'nombre_completo'),
+      resolverNombres('profiles', perfilesIds, 'id', 'nombre_completo'),
     ]);
 
     res.json(rows.map((c) => ({
@@ -348,7 +332,7 @@ router.post('/cuestionarios/:id/adendas', ESCRITURA, validate(idParamSchema, 'pa
  * deleted_at/estado y deja un snapshot en `cuestionario_borrados` y un log en
  * `audit_logs`. Prohibido para el resto de roles.
  */
-router.delete('/cuestionarios/:id', requireRole('admin', 'super_root'), validate(idParamSchema, 'params'), validate(eliminarCuestionarioSchema), async (req, res, next) => {
+router.delete('/cuestionarios/:id', requireRole(...ROLES_ADMIN_SUPER), validate(idParamSchema, 'params'), validate(eliminarCuestionarioSchema), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const body = req.body as z.infer<typeof eliminarCuestionarioSchema>;

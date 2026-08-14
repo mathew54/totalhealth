@@ -1,88 +1,23 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, getApiError } from '../../lib/api'
+import BuscadorPacientes from '../../components/ui/BuscadorPacientes'
 import { useExpedienteStore } from './expedienteStore'
 import type { PacienteExpediente } from './types'
+import type { Paciente } from '../../lib/types'
 
-/** Barra superior: búsqueda con autocomplete (debounce 300ms) por nombre, DNI o teléfono. */
-export default function BuscadorPacientes() {
+/** Barra superior: búsqueda con autocomplete por nombre, DNI o teléfono. Reutiliza
+ *  el BuscadorPacientes compartido; aquí solo se añade el contexto de expediente
+ *  (selector de menor, tutor y alta de menor vinculado). */
+export default function BuscadorPacientesExpediente() {
   const { paciente, setPaciente } = useExpedienteStore()
-  const [termino, setTermino] = useState('')
-  const [abierto, setAbierto] = useState(false)
-  const boxRef = useRef<HTMLDivElement>(null)
-
-  const { data: resultados = [], isFetching } = useQuery({
-    queryKey: ['expediente', 'buscar', termino],
-    enabled: termino.trim().length >= 2,
-    queryFn: async () => {
-      const { data } = await api.get<PacienteExpediente[]>('/pacientes', { params: { q: termino.trim(), limit: 10 } })
-      return data
-    },
-  })
-
-  // Debounce 300 ms: abre el menú solo cuando dejas de escribir.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (termino.trim().length >= 2) setAbierto(true)
-    }, 300)
-    return () => clearTimeout(t)
-  }, [termino])
-
-  // Cierra al hacer clic fuera.
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setAbierto(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [])
-
-  function elegir(p: PacienteExpediente) {
-    setPaciente(p)
-    setTermino(p.nombre_completo)
-    setAbierto(false)
-  }
 
   return (
-    <div ref={boxRef} className="relative w-full">
-      <div className="relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-        <input
-          value={termino}
-          onChange={(e) => setTermino(e.target.value)}
-          onFocus={() => termino.trim().length >= 2 && setAbierto(true)}
-          placeholder="Buscar paciente por nombre, cédula o teléfono…"
-          className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm focus:border-brand-500 focus:outline-none"
-        />
-        {isFetching && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">…</span>}
-      </div>
-
-      {abierto && (
-        <ul className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-          {!isFetching && resultados.length === 0 && (
-            <li className="px-3 py-2 text-xs text-slate-500">Sin resultados para “{termino}”.</li>
-          )}
-          {resultados.map((p) => (
-            <li key={p.id}>
-              <button
-                type="button"
-                onClick={() => elegir(p)}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-medium text-slate-800">{p.nombre_completo}</span>
-                  <span className="block truncate text-[11px] text-slate-400">
-                    {[p.cedula, p.es_menor ? `Menor · ${p.parentesco_representante ?? 'representado'}` : null]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
+    <div className="w-full">
+      <BuscadorPacientes
+        value={paciente as Paciente | null}
+        onChange={(p) => p && setPaciente(p as PacienteExpediente)}
+      />
       {paciente && <SelectorMenor />}
     </div>
   )

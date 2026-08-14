@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import {
@@ -45,7 +46,7 @@ router.get('/', async (_req, res, next) => {
  * PUT /api/preanalitica/config
  * Activa/desactiva el módulo y decide si la validación es obligatoria.
  */
-router.put('/config', requireRole('admin', 'super_root'), validate(configPreanaliticaSchema), async (req, res, next) => {
+router.put('/config', requireRole(...ROLES_ADMIN_SUPER), validate(configPreanaliticaSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof configPreanaliticaSchema>;
     const { data, error } = await getSupabase()
@@ -68,7 +69,7 @@ router.put('/config', requireRole('admin', 'super_root'), validate(configPreanal
  * POST /api/preanalitica/checkpoints
  * Agrega un nuevo punto de verificación al catálogo.
  */
-router.post('/checkpoints', requireRole('admin', 'super_root'), validate(checkpointSchema), async (req, res, next) => {
+router.post('/checkpoints', requireRole(...ROLES_ADMIN_SUPER), validate(checkpointSchema), async (req, res, next) => {
   try {
     const { nombre } = req.body as z.infer<typeof checkpointSchema>;
     const user = req.user!;
@@ -88,7 +89,7 @@ router.post('/checkpoints', requireRole('admin', 'super_root'), validate(checkpo
  * PATCH /api/preanalitica/checkpoints/:id
  * Activa/desactiva un checkpoint.
  */
-router.patch('/checkpoints/:id', requireRole('admin', 'super_root'), validate(idParamSchema, 'params'), async (req, res, next) => {
+router.patch('/checkpoints/:id', requireRole(...ROLES_ADMIN_SUPER), validate(idParamSchema, 'params'), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const { activo } = req.body as { activo?: boolean };

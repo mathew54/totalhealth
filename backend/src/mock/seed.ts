@@ -1,5 +1,7 @@
 import type { Row } from './store.js'
 import { fechaHoyCaracas } from '../services/bcv.js'
+import { CATEGORIAS_MEDICAS, CHECKPOINTS_PREANALITICA, ESPECIALIDADES_MEDICAS } from '../data/catalogos.js'
+import { PAISES } from '../data/paises.js'
 
 export const CLINICA_ID = '00000000-0000-0000-0000-000000000001'
 
@@ -49,9 +51,12 @@ export const SEED: Record<string, Row[]> = {
       logo_url: '/favicon.svg',
       header_color: '#8b5cf6',
       preanalitica: { habilitado: true, obligatorio: true },
+      iva: 0.16,
       updated_at: dayAgo(30),
     },
   ],
+
+  paises: PAISES.map((p) => ({ id: p.iso2, nombre: p.nombre, codigo: p.codigo })),
 
   clinicas: [
     {
@@ -303,13 +308,13 @@ export const SEED: Record<string, Row[]> = {
     { id: '96000000-0000-0000-0000-000000000010', medico_id: AUTH_USERS[6].id, clinica_id: CLINICA_ID, dia: 4, hora_inicio: '13:00:00', hora_fin: '18:00:00', duracion_min: 30, activo: true, created_at: dayAgo(16), updated_at: dayAgo(16) },
   ],
 
-  checkpoints_preanalitica: [
-    { id: '97000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, nombre: 'Identidad del paciente confirmada', activo: true, created_at: dayAgo(20) },
-    { id: '97000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, nombre: 'Ayuno / condiciones previas cumplidas', activo: true, created_at: dayAgo(20) },
-    { id: '97000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, nombre: 'Tubo o recipiente correcto y etiquetado', activo: true, created_at: dayAgo(20) },
-    { id: '97000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, nombre: 'Registrada la hora de la toma', activo: true, created_at: dayAgo(20) },
-    { id: '97000000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, nombre: 'Muestra en buen estado y sin hemólisis', activo: true, created_at: dayAgo(20) },
-  ],
+  checkpoints_preanalitica: CHECKPOINTS_PREANALITICA.map((nombre, i) => ({
+    id: `97000000-0000-0000-0000-${String(i + 1).padStart(12, '0')}`,
+    clinica_id: CLINICA_ID,
+    nombre,
+    activo: true,
+    created_at: dayAgo(20),
+  })),
 
   solicitudes_preanalitica: [
     { id: '98000000-0000-0000-0000-000000000001', solicitud_id: '50000000-0000-0000-0000-000000000001', checkpoint_id: '97000000-0000-0000-0000-000000000001', cumplido: true, validado_por: AUTH_USERS[4].id, created_at: dayAgo(6) },
@@ -346,49 +351,25 @@ export const SEED: Record<string, Row[]> = {
   ],
 
   imagenes_clinicas: [
-    { id: '9C000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: '30000000-0000-0000-0000-000000000001', url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#0f172a"/><text x="300" y="200" font-size="26" fill="#e2e8f0" text-anchor="middle" font-family="monospace">RX TORAX - JUAN PEREZ</text><line x1="100" y1="280" x2="500" y2="280" stroke="#475569" stroke-width="12"/><line x1="300" y1="120" x2="300" y2="280" stroke="#e2e8f0" stroke-width="8"/><line x1="120" y1="150" x2="300" y2="220" stroke="#94a3b8" stroke-width="14"/><line x1="480" y1="150" x2="300" y2="220" stroke="#94a3b8" stroke-width="14"/></svg>').toString('base64'), tipo: 'rx', region: 'Tórax', descripcion: 'Placa de tórax AP: campos pulmonares sin lesiones', creado_por: AUTH_USERS[2].id, created_at: dayAgo(6) },
-    { id: '9C000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: null, url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#052e16"/><text x="300" y="200" font-size="26" fill="#dcfce7" text-anchor="middle" font-family="monospace">ECOGRAFIA ABDOMINAL</text><ellipse cx="300" cy="220" rx="140" ry="90" fill="none" stroke="#dcfce7" stroke-width="6"/><line x1="170" y1="180" x2="250" y2="240" stroke="#86efac" stroke-width="8"/></svg>').toString('base64'), tipo: 'ecografia', region: 'Abdomen', descripcion: 'Hígado y vesícula sin alteraciones', creado_por: AUTH_USERS[2].id, created_at: dayAgo(4) },
+    { id: '9C000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, estudio_id: '9D000000-0000-0000-0000-000000000001', paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: '30000000-0000-0000-0000-000000000001', url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#0f172a"/><text x="300" y="200" font-size="26" fill="#e2e8f0" text-anchor="middle" font-family="monospace">RX TORAX - JUAN PEREZ</text><line x1="100" y1="280" x2="500" y2="280" stroke="#475569" stroke-width="12"/><line x1="300" y1="120" x2="300" y2="280" stroke="#e2e8f0" stroke-width="8"/><line x1="120" y1="150" x2="300" y2="220" stroke="#94a3b8" stroke-width="14"/><line x1="480" y1="150" x2="300" y2="220" stroke="#94a3b8" stroke-width="14"/></svg>').toString('base64'), tipo: 'rx', region: 'Tórax', descripcion: 'Placa de tórax AP: campos pulmonares sin lesiones', orden: 1, creado_por: AUTH_USERS[2].id, created_at: dayAgo(6) },
+    { id: '9C000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, estudio_id: '9D000000-0000-0000-0000-000000000002', paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: null, url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#052e16"/><text x="300" y="200" font-size="26" fill="#dcfce7" text-anchor="middle" font-family="monospace">ECOGRAFIA ABDOMINAL</text><ellipse cx="300" cy="220" rx="140" ry="90" fill="none" stroke="#dcfce7" stroke-width="6"/><line x1="170" y1="180" x2="250" y2="240" stroke="#86efac" stroke-width="8"/></svg>').toString('base64'), tipo: 'ecografia', region: 'Abdomen', descripcion: 'Hígado y vesícula sin alteraciones', orden: 1, creado_por: AUTH_USERS[2].id, created_at: dayAgo(4) },
     // Resonancia magnética (paciente con gonalgia).
-    { id: '9C000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000008', consulta_id: '30000000-0000-0000-0000-000000000009', url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#1e1b4b"/><text x="300" y="200" font-size="26" fill="#c7d2fe" text-anchor="middle" font-family="monospace">RMN RODILLA DERECHA</text><circle cx="300" cy="240" r="80" fill="none" stroke="#c7d2fe" stroke-width="6"/><line x1="300" y1="240" x2="300" y2="120" stroke="#a5b4fc" stroke-width="6"/></svg>').toString('base64'), tipo: 'resonancia', region: 'Rodilla derecha', descripcion: 'RMN de rodilla: desgaste meniscal medial', creado_por: AUTH_USERS[6].id, created_at: dayAgo(5) },
-    // Tomografía (control del paciente crónico).
-    { id: '9C000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000012', consulta_id: null, url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#292524"/><text x="300" y="200" font-size="26" fill="#fde68a" text-anchor="middle" font-family="monospace">TC ABDOMEN</text><rect x="220" y="160" width="160" height="120" fill="none" stroke="#fde68a" stroke-width="6"/><circle cx="300" cy="220" r="30" fill="none" stroke="#fcd34d" stroke-width="6"/></svg>').toString('base64'), tipo: 'tomografia', region: 'Abdomen', descripcion: 'TC abdominal de control', creado_por: AUTH_USERS[2].id, created_at: dayAgo(9) },
+    { id: '9C000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, estudio_id: '9D000000-0000-0000-0000-000000000003', paciente_id: '20000000-0000-0000-0000-000000000008', consulta_id: '30000000-0000-0000-0000-000000000009', url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#1e1b4b"/><text x="300" y="200" font-size="26" fill="#c7d2fe" text-anchor="middle" font-family="monospace">RMN RODILLA DERECHA</text><circle cx="300" cy="240" r="80" fill="none" stroke="#c7d2fe" stroke-width="6"/><line x1="300" y1="240" x2="300" y2="120" stroke="#a5b4fc" stroke-width="6"/></svg>').toString('base64'), tipo: 'resonancia', region: 'Rodilla derecha', descripcion: 'RMN de rodilla: desgaste meniscal medial', orden: 1, creado_por: AUTH_USERS[6].id, created_at: dayAgo(5) },
+    // Tomografía (control del paciente crónico) — serie de 2 cortes.
+    { id: '9C000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, estudio_id: '9D000000-0000-0000-0000-000000000004', paciente_id: '20000000-0000-0000-0000-000000000012', consulta_id: null, url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#292524"/><text x="300" y="200" font-size="26" fill="#fde68a" text-anchor="middle" font-family="monospace">TC ABDOMEN</text><rect x="220" y="160" width="160" height="120" fill="none" stroke="#fde68a" stroke-width="6"/><circle cx="300" cy="220" r="30" fill="none" stroke="#fcd34d" stroke-width="6"/></svg>').toString('base64'), tipo: 'tomografia', region: 'Abdomen', descripcion: 'TC abdominal de control — corte 1', orden: 1, creado_por: AUTH_USERS[2].id, created_at: dayAgo(9) },
+    { id: '9C000000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, estudio_id: '9D000000-0000-0000-0000-000000000004', paciente_id: '20000000-0000-0000-0000-000000000012', consulta_id: null, url: 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#292524"/><text x="300" y="200" font-size="26" fill="#fde68a" text-anchor="middle" font-family="monospace">TC ABDOMEN</text><rect x="220" y="160" width="160" height="120" fill="none" stroke="#fde68a" stroke-width="6"/><circle cx="300" cy="220" r="30" fill="none" stroke="#fcd34d" stroke-width="6"/><line x1="300" y1="120" x2="300" y2="320" stroke="#fcd34d" stroke-width="2" stroke-dasharray="6 6"/></svg>').toString('base64'), tipo: 'tomografia', region: 'Abdomen', descripcion: 'TC abdominal de control — corte 2', orden: 2, creado_por: AUTH_USERS[2].id, created_at: dayAgo(9) },
   ],
 
-  categorias_medicas: [
-    { id: 'atencion_primaria', nombre: 'Atención Primaria y Medicina General', descripcion: 'Medicina General, Pediatría, Geriatría', orden: 1 },
-    { id: 'especialidades_clinicas', nombre: 'Especialidades Clínicas', descripcion: 'Cardiología, Neurología, Gastroenterología, Endocrinología', orden: 2 },
-    { id: 'especialidades_quirurgicas', nombre: 'Especialidades Quirúrgicas', descripcion: 'Cirugía General, Traumatología, Neurocirugía', orden: 3 },
-    { id: 'medico_quirurgicas', nombre: 'Médico-Quirúrgicas', descripcion: 'Gineco/Obstetricia, Urología, Oftalmología, ORL', orden: 4 },
-    { id: 'diagnostico_apoyo', nombre: 'Diagnóstico y Apoyo Clínico', descripcion: 'Patología, Radiología, Imagenología', orden: 5 },
-    { id: 'critica_urgencias', nombre: 'Medicina Crítica y Urgencias', descripcion: 'Intensivistas, Anestesiólogos, Emergentólogos', orden: 6 },
-    { id: 'salud_publica', nombre: 'Salud Pública y Otras', descripcion: 'Fisiatría, Medicina Ocupacional, del Deporte', orden: 7 },
+  estudios_imagen: [
+    { id: '9D000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: '30000000-0000-0000-0000-000000000001', tipo: 'rx', region: 'Tórax', titulo: 'Placa de tórax AP', hallazgos: 'Campos pulmonares sin lesiones.', impresion: 'Sin hallazgos patológicos.', estado: 'leido', medico_id: AUTH_USERS[2].id, creado_por: AUTH_USERS[2].id, fecha_estudio: dayAgo(6), retencion_hasta: null, token: null, token_expira: null, created_at: dayAgo(6), updated_at: dayAgo(5) },
+    { id: '9D000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: null, tipo: 'ecografia', region: 'Abdomen', titulo: 'Ecografía abdominal', hallazgos: 'Hígado y vesícula sin alteraciones.', impresion: 'Estudio normal.', estado: 'pendiente', medico_id: null, creado_por: AUTH_USERS[2].id, fecha_estudio: dayAgo(4), retencion_hasta: null, token: null, token_expira: null, created_at: dayAgo(4), updated_at: dayAgo(4) },
+    { id: '9D000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000008', consulta_id: '30000000-0000-0000-0000-000000000009', tipo: 'resonancia', region: 'Rodilla derecha', titulo: 'RMN de rodilla', hallazgos: 'Desgaste meniscal medial.', impresion: 'Cambios degenerativos meniscales.', estado: 'pendiente', medico_id: AUTH_USERS[6].id, creado_por: AUTH_USERS[6].id, fecha_estudio: dayAgo(5), retencion_hasta: null, token: null, token_expira: null, created_at: dayAgo(5), updated_at: dayAgo(5) },
+    { id: '9D000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000012', consulta_id: null, tipo: 'tomografia', region: 'Abdomen', titulo: 'TC abdominal de control', hallazgos: null, impresion: null, estado: 'pendiente', medico_id: null, creado_por: AUTH_USERS[2].id, fecha_estudio: dayAgo(9), retencion_hasta: null, token: null, token_expira: null, created_at: dayAgo(9), updated_at: dayAgo(9) },
   ],
 
-  especialidades_medicas: [
-    { id: 'medicina_general', categoria: 'atencion_primaria', nombre: 'Medicina General' },
-    { id: 'pediatria', categoria: 'atencion_primaria', nombre: 'Pediatría' },
-    { id: 'geriatria', categoria: 'atencion_primaria', nombre: 'Geriatría' },
-    { id: 'cardiologia', categoria: 'especialidades_clinicas', nombre: 'Cardiología' },
-    { id: 'neurologia', categoria: 'especialidades_clinicas', nombre: 'Neurología' },
-    { id: 'gastroenterologia', categoria: 'especialidades_clinicas', nombre: 'Gastroenterología' },
-    { id: 'endocrinologia', categoria: 'especialidades_clinicas', nombre: 'Endocrinología' },
-    { id: 'cirugia_general', categoria: 'especialidades_quirurgicas', nombre: 'Cirugía General' },
-    { id: 'traumatologia', categoria: 'especialidades_quirurgicas', nombre: 'Traumatología' },
-    { id: 'neurocirugia', categoria: 'especialidades_quirurgicas', nombre: 'Neurocirugía' },
-    { id: 'ginecologia', categoria: 'medico_quirurgicas', nombre: 'Ginecología y Obstetricia' },
-    { id: 'urologia', categoria: 'medico_quirurgicas', nombre: 'Urología' },
-    { id: 'oftalmologia', categoria: 'medico_quirurgicas', nombre: 'Oftalmología' },
-    { id: 'orl', categoria: 'medico_quirurgicas', nombre: 'Otorrinolaringología' },
-    { id: 'patologia', categoria: 'diagnostico_apoyo', nombre: 'Patología' },
-    { id: 'radiologia', categoria: 'diagnostico_apoyo', nombre: 'Radiología' },
-    { id: 'imagenologia', categoria: 'diagnostico_apoyo', nombre: 'Imagenología' },
-    { id: 'medicina_critica', categoria: 'critica_urgencias', nombre: 'Medicina Crítica' },
-    { id: 'anestesiologia', categoria: 'critica_urgencias', nombre: 'Anestesiología' },
-    { id: 'emergencias', categoria: 'critica_urgencias', nombre: 'Emergentología' },
-    { id: 'fisiatria', categoria: 'salud_publica', nombre: 'Fisiatría' },
-    { id: 'medicina_ocupacional', categoria: 'salud_publica', nombre: 'Medicina Ocupacional' },
-    { id: 'medicina_deporte', categoria: 'salud_publica', nombre: 'Medicina del Deporte' },
-  ],
+  categorias_medicas: CATEGORIAS_MEDICAS.map((c) => ({ ...c })),
+
+  especialidades_medicas: ESPECIALIDADES_MEDICAS.map((e) => ({ ...e })),
 
   historial_clinico: [
     { id: '9D100000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, paciente_id: '20000000-0000-0000-0000-000000000001', consulta_id: '30000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[2].id, tipo: 'evolucion', categoria_origen: 'atencion_primaria', titulo: 'Chequeo general — evolución', contenido: { subjetivo: 'Paciente asintomático, refiere buen estado general.', objetivo: 'TA 120/80, FC 72 lpm, IMC 24.1.', plan: 'Continuar actividad física. Controles anuales.' }, firma_hash: 'demo', created_at: dayAgo(7) },

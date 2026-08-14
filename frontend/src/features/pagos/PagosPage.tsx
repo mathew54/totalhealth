@@ -4,6 +4,8 @@ import { api, getApiError } from '../../lib/api'
 import { descargarFacturaPdf } from '../../lib/facturaPdf'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd, usdABs, bsAUsd, formatearBs } from '../../lib/moneda'
+import { useConfigStore } from '../../lib/configStore'
+import type { FacturaResp } from '../../lib/facturaPdf'
 
 interface Solicitud {
   id: string
@@ -32,27 +34,6 @@ interface ReportePagos {
   tasa_usd: number | null
   count: number
   pagos: Pago[]
-}
-
-interface FacturaResp {
-  factura: {
-    serie: string
-    control: string
-    tipo: string
-    emisor: { razon_social: string; rif: string; direccion?: string | null; telefono?: string | null }
-    receptor: { nombre: string; cedula: string | null }
-    fecha: string
-    moneda: string
-    lineas: { descripcion: string; cantidad: number; precio: number; precio_iva: number }[]
-    base: number
-    iva: number
-    monto: number
-  }
-  base: number
-  iva: number
-  monto: number
-  descuento: number
-  monto_texto: string
 }
 
 const METODOS = ['efectivo', 'punto', 'transferencia', 'pago_movil', 'zelle']
@@ -166,6 +147,7 @@ function CobroCard(props: {
   const [motivo, setMotivo] = useState('')
   const [verDetalle, setVerDetalle] = useState(false)
   const tasaUsd = useTasaUsd()
+  const ivaConfig = useConfigStore((s) => s.iva)
 
   const { data: detalle } = useQuery<{
     lineas: { id: string; examen: string; precio: number; resultado: { id: string; valores: Record<string, unknown> | null; observaciones: string | null } | null }[]
@@ -176,10 +158,10 @@ function CobroCard(props: {
   })
 
   // El total de la solicitud está en USD (moneda base); el cobro en Bs. se
-  // convierte automáticamente con la tasa del día.
+  // convierte automáticamente con la tasa del día. El IVA sale de app_config.
   const desc = Number(descuento || 0)
   const neto = Math.max(0, solicitud.total - desc)
-  const ivaUsd = Number((neto * 0.16).toFixed(2))
+  const ivaUsd = Number((neto * ivaConfig).toFixed(2))
   const montoUsd = Number((neto + ivaUsd).toFixed(2))
   const enBs = moneda === 'BS'
   const sinTasa = enBs && tasaUsd == null
@@ -221,7 +203,7 @@ function CobroCard(props: {
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <span className="text-slate-500">IVA 16%: {enBs ? formatearBs(ivaMostrar) : `$${ivaUsd.toFixed(2)}`}</span>
+        <span className="text-slate-500">IVA {Math.round(ivaConfig * 100)}%: {enBs ? formatearBs(ivaMostrar) : `$${ivaUsd.toFixed(2)}`}</span>
         <span className="font-bold text-slate-800">
           Pagar: {sinTasa ? '—' : enBs ? `${formatearBs(montoMostrar)} (≈ $${montoUsd.toFixed(2)})` : `$${montoUsd.toFixed(2)}`}
         </span>

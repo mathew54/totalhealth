@@ -2,6 +2,8 @@
 // TotalHealth: scraping de las tasas informativas del Banco Central de Venezuela.
 // Extrae el valor del Dólar (USD) y el Euro (EUR) de la página pública del BCV.
 
+import { hoyCaracas } from '../utils/fechaCaracas.js';
+
 const BCV_URL = process.env.BCV_URL ?? 'https://www.bcv.org.ve/';
 
 export interface TasaBcv {
@@ -68,15 +70,7 @@ export function parseTasasBcv(html: string): { usd: number | null; eur: number |
 }
 
 /** Fecha del día en hora de Caracas (America/Caracas), formato YYYY-MM-DD. */
-export function fechaHoyCaracas(): string {
-  const ahora = new Date();
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Caracas',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(ahora);
-}
+export const fechaHoyCaracas = hoyCaracas;
 
 /**
  * Consulta el sitio del BCV y devuelve las tasas del día.

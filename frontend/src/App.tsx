@@ -21,6 +21,7 @@ const DomiciliosPage = lazy(() => import('./features/domicilios/DomiciliosPage')
 const NotificacionesPage = lazy(() => import('./features/notificaciones/NotificacionesPage'))
 const AlertasPage = lazy(() => import('./features/alertas/AlertasPage'))
 const ImagenesPage = lazy(() => import('./features/imagenes/ImagenesPage'))
+const ImagenCompartidaPage = lazy(() => import('./features/imagenes/ImagenCompartidaPage'))
 const HistorialPage = lazy(() => import('./features/historial/HistorialPage'))
 const ExpedientePage = lazy(() => import('./features/expediente/ExpedientePage'))
 const MocksPage = lazy(() => import('./features/mocks/MocksPage'))
@@ -39,6 +40,7 @@ function AppRoutes() {
       <Route path="/portal" element={<PortalPage />} />
       <Route path="/portal/compartido/:token" element={<ResultadoCompartido />} />
       <Route path="/portal/turnos" element={<PantallaTurnos />} />
+      <Route path="/imagenes/compartir/:token" element={<ImagenCompartidaPage />} />
 
       <Route
         element={

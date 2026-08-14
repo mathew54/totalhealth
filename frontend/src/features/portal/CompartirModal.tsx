@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { generarQrDataUrl } from '../../lib/qr'
 
 export default function CompartirModal({ nombre, url, onClose }: { nombre: string; url: string; onClose: () => void }) {
   const [qr, setQr] = useState<string | null>(null)
@@ -6,11 +7,9 @@ export default function CompartirModal({ nombre, url, onClose }: { nombre: strin
 
   useEffect(() => {
     let activo = true
-    import('qrcode').then(({ default: QRCode }) =>
-      QRCode.toDataURL(url, { width: 420, margin: 2, errorCorrectionLevel: 'M' }).then((u) => {
-        if (activo) setQr(u)
-      }),
-    )
+    generarQrDataUrl(url, { margin: 2 }).then((u) => {
+      if (activo) setQr(u)
+    })
     return () => {
       activo = false
     }

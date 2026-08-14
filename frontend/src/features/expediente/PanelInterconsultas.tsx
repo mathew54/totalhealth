@@ -30,8 +30,19 @@ export default function PanelInterconsultas({ pacienteId }: Props) {
     queryFn: async () => (await api.get('/historial/interconsultas', { params: { paciente_id: pacienteId } })).data,
   })
 
-  const invalidar = () =>
+  const esPersonalMedico =
+    profile?.role === 'medico' || profile?.role === 'admin' || profile?.role === 'super_root'
+
+  const { data: bandeja = [] } = useQuery<Interconsulta[]>({
+    queryKey: ['historial', 'interconsultas', 'bandeja'],
+    queryFn: async () => (await api.get('/historial/interconsultas')).data,
+    enabled: esPersonalMedico,
+  })
+
+  const invalidar = () => {
     queryClient.invalidateQueries({ queryKey: ['expediente', 'interconsultas', pacienteId] })
+    queryClient.invalidateQueries({ queryKey: ['historial', 'interconsultas'] })
+  }
 
   const enviar = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api.post('/historial/interconsultas', payload),
@@ -236,6 +247,58 @@ export default function PanelInterconsultas({ pacienteId }: Props) {
             </div>
           ))}
         </div>
+      )}
+
+      {esPersonalMedico && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-bold text-slate-800">Bandeja de especialidad</h3>
+          <p className="text-xs text-slate-500">Interconsultas dirigidas a tu categoría o las que originaste.</p>
+          {bandeja.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-400">Sin interconsultas pendientes para ti.</p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {bandeja.map((i) => (
+                <div key={i.id} className="rounded-lg border border-slate-200 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-700">
+                      {i.categoria_destino_nombre ?? i.especialidad_destino_nombre ?? 'Especialidad'}
+                    </span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${estadoBadge[i.estado] ?? 'bg-slate-100 text-slate-500'}`}>
+                      {i.estado}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-700">{i.motivo}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    de {i.medico_origen_nombre ?? 'Médico'} · {new Date(i.created_at).toLocaleString('es-VE')}
+                  </p>
+                  {(i.estado === 'enviada' || i.estado === 'aceptada') && (
+                    <div className="mt-2 flex gap-2">
+                      {i.estado === 'enviada' && (
+                        <button
+                          type="button"
+                          onClick={() => actualizar.mutate({ id: i.id, patch: { estado: 'aceptada' } })}
+                          className="rounded-lg border border-brand-600 px-2.5 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                        >
+                          Aceptar
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRespondiendo(i)
+                          setRespuesta(i.respuesta ?? '')
+                        }}
+                        className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"
+                      >
+                        Responder
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
     </div>
   )

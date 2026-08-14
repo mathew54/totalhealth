@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { CLAVES_ITEMS, OBSERVACIONES_KEY } from './definicion.js';
 
-export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+export { idParamSchema } from '../../../utils/schemas.js';
 
 /** Query de listado dentro de un paciente: solo el estado (opcional). */
 export const cuestionarioPacienteQuerySchema = z.object({

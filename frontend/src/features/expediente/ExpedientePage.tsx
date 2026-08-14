@@ -13,11 +13,12 @@ import PanelCasos from './PanelCasos'
 import PanelInterconsultas from './PanelInterconsultas'
 import PanelOrdenes from './PanelOrdenes'
 import PanelLaboratorio from './PanelLaboratorio'
+import PanelImagenes from './PanelImagenes'
 import { useExpedienteStore } from './expedienteStore'
 import type { PacienteExpediente } from './types'
 
 type TabCentral = 'anamnesis' | 'especialidad' | 'evolucion' | 'historial'
-type TabLateral = 'notas' | 'casos' | 'interconsultas' | 'ordenes' | 'laboratorio'
+type TabLateral = 'notas' | 'casos' | 'interconsultas' | 'ordenes' | 'laboratorio' | 'imagenes'
 
 const CENTRAL_TABS: { id: TabCentral; label: string }[] = [
   { id: 'anamnesis', label: 'Anamnesis' },
@@ -32,6 +33,7 @@ const LATERAL_TABS: { id: TabLateral; label: string }[] = [
   { id: 'interconsultas', label: 'Interconsultas' },
   { id: 'ordenes', label: 'Órdenes Lab.' },
   { id: 'laboratorio', label: 'Laboratorio' },
+  { id: 'imagenes', label: 'Imágenes' },
 ]
 
 /**
@@ -138,6 +140,9 @@ export default function ExpedientePage() {
                 />
               )}
               {tabLateral === 'laboratorio' && <PanelLaboratorio pacienteId={id} />}
+              {tabLateral === 'imagenes' && (
+                <PanelImagenes pacienteId={id} nombrePaciente={paciente.nombre_completo} />
+              )}
             </div>
           </aside>
           </div>

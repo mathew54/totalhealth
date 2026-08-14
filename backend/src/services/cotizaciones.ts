@@ -6,6 +6,7 @@
 //   y el trigger diario (jobs/syncTasas.ts).
 
 import { getSupabase } from '../config/supabase.js';
+import { fechaCaracasDeISO } from '../utils/fechaCaracas.js';
 import { fechaHoyCaracas, obtenerTasasBCV } from './bcv.js';
 
 const DOLARAPI_URL = process.env.DOLARAPI_URL ?? 'https://ve.dolarapi.com/v1/cotizaciones';
@@ -25,17 +26,7 @@ export function parseNumeroCotizacion(raw: number | null | undefined): number | 
 }
 
 /** Fecha (YYYY-MM-DD) de una marca de tiempo ISO, en hora de Caracas. */
-export function fechaDeISO(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Caracas',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d);
-}
+export const fechaDeISO = fechaCaracasDeISO;
 
 interface CotizacionDolarApi {
   moneda: string;

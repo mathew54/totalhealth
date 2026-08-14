@@ -1,11 +1,13 @@
 import { Router } from 'express';
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, forbidden, notFound } from '../../utils/httpError.js';
+import { MEDICO_ROLES, ROLES_ADMIN_SUPER } from '../../roles.js';
+import { firmaHash } from '../../services/firma.js';
+import { resolverNombres } from '../../services/resolverNombres.js';
 import cuestionarioRoutes from './cuestionarios/cuestionario.routes.js';
 import {
   alertaCriticaSchema,
@@ -15,8 +17,6 @@ import {
   interconsultasQuery,
   interconsultaSchema,
   interconsultaUpdateSchema,
-  notaSchema,
-  notaUpdateSchema,
   pacienteIdParamSchema,
   registroSchema,
 } from './historial.validators.js';
@@ -26,24 +26,6 @@ router.use(authRequired);
 
 // CRUD del cuestionario de anamnesis: vive dentro del módulo de historial.
 router.use(cuestionarioRoutes);
-
-const MEDICO_ROLES = ['medico', 'admin', 'super_root'] as const;
-
-function firmaHash(medicoId: string, marca: string, contenido: unknown): string {
-  return createHash('sha256').update(`${medicoId}:${marca}:${JSON.stringify(contenido ?? {})}`).digest('hex').slice(0, 32);
-}
-
-/** Resuelve nombres de perfiles/catálogos manualmente (mock sin joins). */
-async function resolverNombres(tabla: string, ids: string[], idCol: string, nameCol: string): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (!ids.length) return map;
-  const { data } = await getSupabase().from(tabla).select(`${idCol}, ${nameCol}` as never);
-  for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
-    const key = r[idCol];
-    if (key != null) map.set(String(key), String(r[nameCol] ?? ''));
-  }
-  return map;
-}
 
 async function categoriaDeMedico(medicoId: string): Promise<string | null> {
   const { data } = await getSupabase()
@@ -225,7 +207,7 @@ router.get('/pacientes/:id', validate(pacienteIdParamSchema, 'params'), async (r
  * La categoría de origen se deriva del perfil (no se acepta del cliente).
  * Inmutable: no hay endpoints de UPDATE/DELETE.
  */
-router.post('/', requireRole('medico', 'admin', 'super_root'), validate(registroSchema), async (req, res, next) => {
+router.post('/', requireRole(...MEDICO_ROLES), validate(registroSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof registroSchema>;
     const user = req.user!;
@@ -379,7 +361,7 @@ router.get('/:id', validate(idParamSchema, 'params'), async (req, res, next) => 
  * Fe de Erratas o Adenda vinculada al registro original (marca de agua).
  * Solo el autor original, admin o super_root. No modifica el registro.
  */
-router.post('/:id/correcciones', requireRole('medico', 'admin', 'super_root'), validate(idParamSchema, 'params'), validate(correccionSchema), async (req, res, next) => {
+router.post('/:id/correcciones', requireRole(...MEDICO_ROLES), validate(idParamSchema, 'params'), validate(correccionSchema), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const body = req.body as z.infer<typeof correccionSchema>;
@@ -421,95 +403,10 @@ router.post('/:id/correcciones', requireRole('medico', 'admin', 'super_root'), v
 });
 
 /**
- * GET /api/historial/pacientes/:id/notas
- * Notas privadas del expediente: solo las del médico autor (módulo B).
- */
-router.get('/pacientes/:id/notas', validate(pacienteIdParamSchema, 'params'), requireRole('medico', 'admin', 'super_root'), async (req, res, next) => {
-  try {
-    const { id } = req.params as z.infer<typeof pacienteIdParamSchema>;
-    const user = req.user!;
-
-    const { data, error } = await getSupabase()
-      .from('notas_privadas')
-      .select('*')
-      .eq('paciente_id', id)
-      .eq('medico_id', user.id)
-      .order('created_at', { ascending: false });
-    if (error) return next(badRequest(error.message));
-
-    res.json((data ?? []).map((n) => ({ ...n, medico_nombre: user.nombre })));
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * POST /api/historial/pacientes/:id/notas
- * Crea una nota privada de consulta (visible solo para el autor).
- */
-router.post('/pacientes/:id/notas', validate(pacienteIdParamSchema, 'params'), requireRole('medico', 'admin', 'super_root'), validate(notaSchema), async (req, res, next) => {
-  try {
-    const { id } = req.params as z.infer<typeof pacienteIdParamSchema>;
-    const body = req.body as z.infer<typeof notaSchema>;
-    const user = req.user!;
-
-    const { data: paciente, error: pErr } = await getSupabase().from('pacientes').select('id').eq('id', id).maybeSingle();
-    if (pErr) return next(pErr);
-    if (!paciente) return next(notFound('Paciente no encontrado'));
-
-    const { data, error } = await getSupabase()
-      .from('notas_privadas')
-      .insert({ paciente_id: id, consulta_id: body.consulta_id ?? null, medico_id: user.id, contenido: body.contenido })
-      .select('*')
-      .single();
-    if (error) return next(badRequest(error.message));
-
-    res.status(201).json({ ...data, medico_nombre: user.nombre });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * PATCH /api/historial/notas/:id
- * Actualiza una nota privada (solo el autor o super_root).
- */
-router.patch('/notas/:id', validate(idParamSchema, 'params'), requireRole('medico', 'admin', 'super_root'), validate(notaUpdateSchema), async (req, res, next) => {
-  try {
-    const { id } = req.params as z.infer<typeof idParamSchema>;
-    const body = req.body as z.infer<typeof notaUpdateSchema>;
-    const user = req.user!;
-
-    const { data: nota, error: nErr } = await getSupabase()
-      .from('notas_privadas')
-      .select('id, medico_id')
-      .eq('id', id)
-      .maybeSingle();
-    if (nErr) return next(nErr);
-    if (!nota) return next(notFound('Nota no encontrada'));
-    if (nota.medico_id !== user.id && user.role !== 'super_root') {
-      return next(forbidden('Solo el autor de la nota puede editarla'));
-    }
-
-    const { data, error } = await getSupabase()
-      .from('notas_privadas')
-      .update({ contenido: body.contenido, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*')
-      .single();
-    if (error) return next(badRequest(error.message));
-
-    res.json({ ...data, medico_nombre: user.nombre });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
  * POST /api/historial/pacientes/:id/alertas
  * Alta de una alerta crítica para el banner global (módulo A).
  */
-router.post('/pacientes/:id/alertas', validate(pacienteIdParamSchema, 'params'), requireRole('medico', 'admin', 'super_root'), validate(alertaCriticaSchema), async (req, res, next) => {
+router.post('/pacientes/:id/alertas', validate(pacienteIdParamSchema, 'params'), requireRole(...MEDICO_ROLES), validate(alertaCriticaSchema), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof pacienteIdParamSchema>;
     const body = req.body as z.infer<typeof alertaCriticaSchema>;
@@ -532,7 +429,7 @@ router.post('/pacientes/:id/alertas', validate(pacienteIdParamSchema, 'params'),
  * PATCH /api/historial/alertas/:id
  * Desactiva/activa una alerta crítica (admin/super_root). Sin borrado físico.
  */
-router.patch('/alertas/:id', validate(idParamSchema, 'params'), requireRole('admin', 'super_root'), validate(alertaUpdateSchema), async (req, res, next) => {
+router.patch('/alertas/:id', validate(idParamSchema, 'params'), requireRole(...ROLES_ADMIN_SUPER), validate(alertaUpdateSchema), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const body = req.body as z.infer<typeof alertaUpdateSchema>;
@@ -556,7 +453,7 @@ router.patch('/alertas/:id', validate(idParamSchema, 'params'), requireRole('adm
  * POST /api/historial/interconsultas
  * Deriva al paciente a otra categoría de especialidad (módulo C).
  */
-router.post('/interconsultas', requireRole('medico', 'admin', 'super_root'), validate(interconsultaSchema), async (req, res, next) => {
+router.post('/interconsultas', requireRole(...MEDICO_ROLES), validate(interconsultaSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof interconsultaSchema>;
     const user = req.user!;

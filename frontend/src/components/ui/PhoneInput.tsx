@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { PAISES, type Pais } from '../../lib/paises'
+import { usePaises, VENEZUELA, type Pais } from '../../lib/paises'
 import { separarTelefono, unificarTelefono, limpiarNumeroLocal, paisDesdeCodigo } from '../../lib/phone'
 
 export interface PhoneInputValue {
@@ -47,14 +47,19 @@ export default function PhoneInput({
   disabled,
   className,
 }: PhoneInputProps) {
+  const { paises: PAISES } = usePaises()
+
   const inicial = useMemo(() => {
     const fuente = value ?? defaultValue ?? ''
     const partes = separarTelefono(fuente)
     return {
-      pais: partes.country_code ? paisDesdeCodigo(partes.country_code) : (PAISES.find((p) => p.iso2 === defaultCountry) ?? paisDesdeCodigo('58')),
+      pais:
+        partes.country_code
+          ? paisDesdeCodigo(partes.country_code)
+          : (PAISES.find((p) => p.iso2 === defaultCountry) ?? VENEZUELA),
       local: partes.local_number ?? '',
     }
-  }, [value, defaultValue, defaultCountry])
+  }, [value, defaultValue, defaultCountry, PAISES])
 
   const [pais, setPais] = useState<Pais>(inicial.pais)
   const [local, setLocal] = useState<string>(inicial.local)
@@ -113,7 +118,7 @@ export default function PhoneInput({
     const q = busqueda.trim().toLowerCase()
     if (!q) return PAISES
     return PAISES.filter((p) => p.nombre.toLowerCase().includes(q) || p.codigo.includes(q) || p.iso2.toLowerCase().includes(q))
-  }, [busqueda])
+  }, [busqueda, PAISES])
 
   const country_code = `+${pais.codigo}`
   const telefono = unificarTelefono({ country_code, local_number: local })

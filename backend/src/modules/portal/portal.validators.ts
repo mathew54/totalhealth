@@ -10,7 +10,7 @@ export const verificarSchema = z.object({
   codigo: z.string().regex(/^\d{6}$/, 'Código de 6 dígitos'),
 });
 
-export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+export { idParamSchema } from '../../utils/schemas.js';
 
 export const reservarSchema = z.object({
   medico_id: z.string().uuid('Médico inválido'),

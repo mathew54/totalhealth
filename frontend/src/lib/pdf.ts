@@ -67,6 +67,51 @@ async function loadLogoDataUrl(src: string): Promise<string | null> {
 }
 
 /**
+ * Dibuja la cabecera de marca del PDF (logo + razón social + RIF + contacto).
+ * Devuelve la coordenada `y` actualizada: la línea divisoria va justo ahí.
+ * Compartida por todos los PDFs de la app (resultados y facturas).
+ */
+export async function dibujarCabeceraMarca(
+  doc: jsPDF,
+  branding: Branding | undefined,
+  margin: number,
+  y: number,
+): Promise<number> {
+  const nombre = branding?.razon_social || 'TotalHealth'
+  const rif = branding?.rif || ''
+  const direccion = branding?.direccion || ''
+  const telefono = formatearTelefono(branding?.telefono) || ''
+  let logo: string | null = null
+  if (branding?.logo_url) logo = await loadLogoDataUrl(branding.logo_url)
+
+  if (logo) {
+    try {
+      doc.addImage(logo, 'PNG', margin, y, 12, 12)
+    } catch {
+      logo = null
+    }
+  }
+  const textX = logo ? margin + 16 : margin
+  doc.setFontSize(14)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(40)
+  doc.text(nombre, textX, y + 6)
+  if (rif) {
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(110)
+    doc.text(`R.I.F. ${rif}`, textX, y + 11)
+  }
+  if (direccion || telefono) {
+    doc.setFontSize(8)
+    doc.setTextColor(110)
+    const contacto = [direccion && `Dir: ${direccion}`, telefono && `Tel: ${telefono}`].filter(Boolean).join(' · ')
+    doc.text(doc.splitTextToSize(contacto, 210 - margin * 2 - (textX - margin)) as string, textX, y + 15)
+  }
+  return y + 16
+}
+
+/**
  * Genera y descarga un PDF con el resultado del paciente usando jsPDF.
  * Incluye la cabecera de marca (razón social, RIF y logo) si existe branding.
  */
@@ -77,42 +122,9 @@ export async function descargarResultadoPdf(r: ResultadoPdf): Promise<void> {
   let y = 18
 
   // ---- Cabecera de marca ----
-  const nombre = r.branding?.razon_social || 'TotalHealth'
-  const rif = r.branding?.rif || ''
-  const direccion = r.branding?.direccion || ''
-  const telefono = formatearTelefono(r.branding?.telefono) || ''
-  let logo: string | null = null
-  if (r.branding?.logo_url) logo = await loadLogoDataUrl(r.branding.logo_url)
-
+  y = await dibujarCabeceraMarca(doc, r.branding, margin, y)
   doc.setDrawColor(200)
   doc.setLineWidth(0.3)
-  if (logo) {
-    try {
-      doc.addImage(logo, 'PNG', margin, y, 12, 12)
-    } catch {
-      logo = null
-    }
-  }
-  const textX = logo ? margin + 16 : margin
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(40)
-  doc.text(nombre, textX, y + 6)
-  if (rif) {
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(120)
-    doc.text(`R.I.F. ${rif}`, textX, y + 11)
-  }
-  if (direccion || telefono) {
-    doc.setFontSize(8)
-    doc.setTextColor(120)
-    const contacto = [direccion && `Dir: ${direccion}`, telefono && `Tel: ${telefono}`].filter(Boolean).join(' · ')
-    doc.text(doc.splitTextToSize(contacto, contentWidth - textX + margin) as string, textX, y + 15)
-  }
-  y += 16
-
-  y += 2
   doc.line(margin, y, 210 - margin, y)
   y += 8
 

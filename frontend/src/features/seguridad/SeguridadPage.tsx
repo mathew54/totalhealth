@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
-import QRCode from 'qrcode'
+import { generarQrDataUrl } from '../../lib/qr'
 import { api, getApiError } from '../../lib/api'
 import { useSessionStore } from '../../stores/sessionStore'
 
@@ -63,7 +63,7 @@ function MfaSetup() {
     mutationFn: () => api.post<MfaSetup>('/auth/mfa/setup'),
     onSuccess: async (res) => {
       setSecret(res.data.secret)
-      setQr(await QRCode.toDataURL(res.data.otpauth_url, { width: 220, margin: 1 }))
+      setQr(await generarQrDataUrl(res.data.otpauth_url, { width: 220, margin: 1 }))
       setError(null)
       setMensaje(null)
     },

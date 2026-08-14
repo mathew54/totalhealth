@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from '
 import { useSearchParams } from 'react-router-dom'
 import { api, getApiError } from '../../lib/api'
 import PrintHeader from '../../components/ui/PrintHeader'
+import type { Paciente } from '../../lib/types'
 
 interface Turno {
   id: string
@@ -18,12 +19,6 @@ interface Turno {
   paciente: { id: string; cedula: string; nombre_completo: string } | null
   medico: { nombre_completo: string; especialidad: string | null } | null
   hora_cita: string | null
-}
-
-interface Paciente {
-  id: string
-  cedula: string
-  nombre_completo: string
 }
 
 interface Medico {

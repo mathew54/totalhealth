@@ -1,6 +1,9 @@
 // Facturación electrónica VE: genera comprobante, recibo y factura fiscal con
 // estructura de datos lista para imprimir (sin HTML server-side; el frontend
-// imprime/descarga). Incluye IVA 16% y control fiscal.
+// imprime/descarga). El IVA es parametrizable (leído de app_config en tiempo de
+// cobro/factura; aquí solo el default y las funciones puras).
+
+import { IVA_DEFECTO } from './configService.js';
 
 export interface FacturaLinea {
   descripcion: string;
@@ -75,10 +78,8 @@ export function montoTexto(monto: number, moneda: string): string {
   return decimal > 0 ? `${base} CON ${String(decimal).padStart(2, '0')}/100` : `${base} CON 00/100`;
 }
 
-const IVA = 0.16;
-
-export function calcularLinea(precioNeto: number): FacturaLinea['precio_iva'] {
-  return Number((precioNeto * (1 + IVA)).toFixed(2));
+export function calcularLinea(precioNeto: number, iva = IVA_DEFECTO): FacturaLinea['precio_iva'] {
+  return Number((precioNeto * (1 + iva)).toFixed(2));
 }
 
 export function construirFactura(opts: {
@@ -90,7 +91,9 @@ export function construirFactura(opts: {
   conceptos: { descripcion: string; cantidad?: number; neto: number }[];
   serie: string;
   control: string;
+  iva?: number;
 }): Factura {
+  const ivaAplicado = opts.iva ?? IVA_DEFECTO;
   const lineas: FacturaLinea[] = opts.conceptos.map((c) => {
     const cantidad = c.cantidad ?? 1;
     const neto = c.neto;
@@ -98,7 +101,7 @@ export function construirFactura(opts: {
       descripcion: c.descripcion,
       cantidad,
       precio: Number(neto.toFixed(2)),
-      precio_iva: Number((calcularLinea(neto / cantidad) * cantidad).toFixed(2)),
+      precio_iva: Number((calcularLinea(neto / cantidad, ivaAplicado) * cantidad).toFixed(2)),
     };
   });
   const base = Number(lineas.reduce((acc, l) => acc + l.precio * l.cantidad, 0).toFixed(2));

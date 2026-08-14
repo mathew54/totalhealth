@@ -153,6 +153,114 @@ describe('Notificaciones: recordatorios automáticos y mantenimiento', () => {
     expect(notif.sent_at).toBeTruthy()
   })
 
+  it('envía por lote de IDs aunque la fecha programada sea futura', async () => {
+    const token = await login(SEC)
+
+    const res = await api('/api/notificaciones', {
+      method: 'POST',
+      token,
+      body: {
+        paciente_id: PAC1,
+        canal: 'sms',
+        tipo: 'cita',
+        mensaje: 'Juan, tienes una cita programada para mañana.',
+        programada_para: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    })
+    expect(res.status).toBe(201)
+
+    const lote = await api('/api/notificaciones/enviar-pendientes', {
+      method: 'POST',
+      token,
+      body: { ids: [res.body.id] },
+    })
+    expect(lote.status).toBe(200)
+    expect(lote.body.enviadas).toBe(1)
+
+    const { data } = await getColaInterna()
+    const notif = data.find((n: { id: string }) => n.id === res.body.id)
+    expect(notif.estado).toBe('enviada')
+  })
+
+  it('la edición vuelve una notificación fallida a pendiente', async () => {
+    const token = await login(SEC)
+
+    const res = await api('/api/notificaciones', {
+      method: 'POST',
+      token,
+      body: {
+        paciente_id: '20000000-0000-0000-0000-000000000005', // menor sin teléfono
+        canal: 'sms',
+        tipo: 'cita',
+        mensaje: 'Recordatorio de cita de control.',
+        programada_para: new Date(Date.now() - 60_000).toISOString(),
+      },
+    })
+    expect(res.status).toBe(201)
+
+    await api('/api/notificaciones/enviar-pendientes', { method: 'POST', token, body: { ids: [res.body.id] } })
+
+    const edit = await api(`/api/notificaciones/${res.body.id}`, {
+      method: 'PATCH',
+      token,
+      body: { telefono: '04141234567', mensaje: 'Recordatorio de cita de control actualizado.' },
+    })
+    expect(edit.status).toBe(200)
+    expect(edit.body.estado).toBe('pendiente')
+    expect(edit.body.error).toBeNull()
+    expect(edit.body.telefono).toBe('+584141234567')
+
+    // Ahora con teléfono válido el envío debería prosperar.
+    const lote = await api('/api/notificaciones/enviar-pendientes', { method: 'POST', token, body: { ids: [res.body.id] } })
+    expect(lote.body.enviadas).toBe(1)
+  })
+
+  it('no permite editar una notificación ya enviada', async () => {
+    const token = await login(SEC)
+
+    const res = await api('/api/notificaciones', {
+      method: 'POST',
+      token,
+      body: {
+        paciente_id: PAC1,
+        canal: 'sms',
+        tipo: 'pago',
+        mensaje: 'Juan, tienes un pago pendiente de $15.00.',
+        programada_para: new Date(Date.now() - 60_000).toISOString(),
+      },
+    })
+    await api('/api/notificaciones/enviar-pendientes', { method: 'POST', token, body: { ids: [res.body.id] } })
+
+    const edit = await api(`/api/notificaciones/${res.body.id}`, { method: 'PATCH', token, body: { mensaje: 'Nuevo mensaje.' } })
+    expect(edit.status).toBe(400)
+  })
+
+  it('elimina una notificación individual', async () => {
+    const token = await login(SEC)
+
+    const res = await api('/api/notificaciones', {
+      method: 'POST',
+      token,
+      body: {
+        paciente_id: PAC1,
+        canal: 'sms',
+        tipo: 'turno',
+        mensaje: 'Juan, tu turno es el número 9.',
+        programada_para: new Date(Date.now() + 3600_000).toISOString(),
+      },
+    })
+
+    const del = await api(`/api/notificaciones/${res.body.id}`, { method: 'DELETE', token })
+    expect(del.status).toBe(200)
+    expect(del.body.ok).toBe(true)
+
+    const cola = await api('/api/notificaciones', { token })
+    expect(cola.body.some((n: { id: string }) => n.id === res.body.id)).toBe(false)
+
+    const del2 = await api(`/api/notificaciones/${res.body.id}`, { method: 'DELETE', token })
+    expect(del2.status).toBe(404)
+  })
+
   it('marca como fallida una pendiente sin teléfono válido', async () => {
     const token = await login(SEC)
 

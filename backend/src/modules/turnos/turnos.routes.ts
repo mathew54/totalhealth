@@ -3,29 +3,20 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_SECRETARIA_ADMIN } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import { crearTurnoSchema, asignarMedicoSchema, idParamSchema, estadoTurnoSchema, turnosQuery } from './turnos.validators.js';
 import { fechaHoyCaracas } from '../../services/bcv.js';
 import { notificarSalaEspera } from '../../services/notifier.js';
+import { proximoNumeroTurno } from '../../services/turnos.js';
 
 const router = Router();
-router.use(authRequired, requireRole('secretaria', 'admin', 'super_root'));
+router.use(authRequired, requireRole(...ROLES_SECRETARIA_ADMIN));
 
 const COLS = 'id, clinica_id, paciente_id, consulta_id, numero, fecha, estado, prioridad, creado_por, hora_creado, hora_llamado, hora_atendido';
 
 const DURACION_ATENCION_MIN = 20;
-
-/** Asigna el próximo número del día. */
-async function proximoNumero(clinicaId: string | null, fecha: string): Promise<number> {
-  const { data } = await getSupabase()
-    .from('turnos')
-    .select('numero')
-    .eq('fecha', fecha)
-    .order('numero', { ascending: false })
-    .range(0, 0);
-  return (data?.[0]?.numero as number ?? 0) + 1;
-}
 
 interface ConsultaBasica {
   id: string;
@@ -145,7 +136,7 @@ router.post('/', validate(crearTurnoSchema), async (req, res, next) => {
       }
     }
 
-    const numero = await proximoNumero(user.clinicaId, fecha);
+    const numero = await proximoNumeroTurno(user.clinicaId, fecha);
 
     const { data, error } = await getSupabase()
       .from('turnos')

@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Line, LineChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../../../lib/api'
+import { useExpedienteStore } from '../../expediente/expedienteStore'
 import Widget from './Widget'
 import { PacientePicker, type PacienteMini } from './PacientePicker'
 
@@ -32,6 +34,7 @@ export function TendenciasParametros() {
   const [paciente, setPaciente] = useState<PacienteMini | null>(null)
   const [examen, setExamen] = useState('todos')
   const [param, setParam] = useState('resultado')
+  const navigate = useNavigate()
 
   const { data: resultados = [], isLoading } = useQuery<ResultadoHist[]>({
     queryKey: ['solicitudes', 'resultados', paciente?.id],
@@ -84,7 +87,19 @@ export function TendenciasParametros() {
         <PacientePicker value={null} onChange={setPaciente} />
       ) : (
         <div className="space-y-2">
-          <PacientePicker value={paciente} onChange={(p) => { setPaciente(p); setExamen('todos') }} />
+          <div className="flex items-center justify-between gap-2">
+            <PacientePicker value={paciente} onChange={(p) => { setPaciente(p); setExamen('todos') }} />
+            <button
+              onClick={() => {
+                useExpedienteStore.getState().setExpedienteId(paciente.id)
+                navigate('/expediente')
+              }}
+              className="shrink-0 rounded-lg border border-brand-300 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+              title="Abrir el expediente clínico completo del paciente"
+            >
+              Ver expediente →
+            </button>
+          </div>
           {isLoading ? (
             <p className="py-4 text-center text-xs text-slate-500">Cargando resultados…</p>
           ) : resultados.length === 0 ? (

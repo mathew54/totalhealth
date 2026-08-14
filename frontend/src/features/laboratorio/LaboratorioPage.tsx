@@ -5,6 +5,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd } from '../../lib/moneda'
+import type { Paciente } from '../../lib/types'
 
 interface Solicitud {
   id: string
@@ -33,12 +34,6 @@ interface Examen {
   nombre: string
   categoria: string | null
   precio: number
-}
-
-interface Paciente {
-  id: string
-  cedula: string
-  nombre_completo: string
 }
 
 interface Reactivo {

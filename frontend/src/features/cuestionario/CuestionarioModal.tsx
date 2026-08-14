@@ -6,12 +6,7 @@ import CuestionarioWizard, {
   type Respuestas,
   OBSERVACIONES_KEY,
 } from './CuestionarioWizard'
-
-export interface Paciente {
-  id: string
-  cedula: string | null
-  nombre_completo: string
-}
+import type { Paciente } from '../../lib/types'
 
 export interface Adenda {
   id: string

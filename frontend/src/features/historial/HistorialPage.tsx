@@ -1,30 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
-import { api, getApiError } from '../../lib/api'
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { api } from '../../lib/api'
 import { useSessionStore } from '../../stores/sessionStore'
-import CuestionarioExpediente from './CuestionarioExpediente'
+import { useConfigStore } from '../../lib/configStore'
+import { TIPO_LABEL, contenidoTexto } from '../../lib/historial'
+import { descargarExpedientePdf, type DatosExpedientePdf } from '../../lib/expedientePdf'
 import ResumenAnamnesis from './ResumenAnamnesis'
-
-interface Paciente {
-  id: string
-  cedula: string | null
-  nombre_completo: string
-  fecha_nacimiento?: string | null
-  sexo?: string | null
-}
-
-interface Categoria {
-  id: string
-  nombre: string
-  descripcion: string | null
-  orden: number
-}
-
-interface Especialidad {
-  id: string
-  categoria: string
-  nombre: string
-}
+import type { Paciente } from '../../lib/types'
+import type { Cuestionario, Definicion } from '../cuestionario/CuestionarioModal'
 
 interface Correccion {
   id: string
@@ -91,6 +74,17 @@ interface ResultadoLaboratorio {
   lineas: LineaResultado[]
 }
 
+interface Evolucion {
+  id: string
+  subjetivo: string
+  objetivo: string
+  evaluacion: string
+  plan: string
+  signos_vitales: Record<string, number | null>
+  especialidad_nombre?: string | null
+  created_at: string
+}
+
 interface Expediente {
   paciente: Paciente
   alertas_criticas: AlertaCritica[]
@@ -99,27 +93,31 @@ interface Expediente {
   resultados_laboratorio: ResultadoLaboratorio[]
 }
 
-const TIPOS = ['evolucion', 'procedimiento', 'interconsulta', 'resultado', 'otro']
-const TIPO_LABEL: Record<string, string> = {
-  evolucion: 'Evolución',
-  procedimiento: 'Procedimiento',
-  interconsulta: 'Interconsulta',
-  resultado: 'Resultado',
-  otro: 'Otro',
+const ESTADO_RESULTADO_STYLE: Record<string, string> = {
+  pendiente: 'bg-blue-100 text-blue-700',
+  en_proceso: 'bg-amber-100 text-amber-700',
+  listo: 'bg-green-100 text-green-700',
+  entregado: 'bg-slate-200 text-slate-600',
 }
 
-function contenidoTexto(contenido: Record<string, unknown>): string {
-  if (typeof contenido?.texto === 'string') return contenido.texto
-  const keys = Object.keys(contenido ?? {})
-  if (keys.length === 0) return ''
-  return keys.map((k) => `${k}: ${String(contenido[k] ?? '')}`).join('\n')
+const ESTADO_IC_STYLE: Record<string, string> = {
+  enviada: 'bg-blue-100 text-blue-700',
+  aceptada: 'bg-amber-100 text-amber-700',
+  completada: 'bg-green-100 text-green-700',
+  cancelada: 'bg-slate-200 text-slate-600',
 }
 
+/**
+ * Historial Médico Digital — visor de lectura/impresión del expediente completo
+ * del paciente. Todos los datos se muestran en modo lectura (el alta y la
+ * gestión se hacen en el módulo Expediente); aquí se lee, se imprime y se
+ * descarga en PDF: anamnesis, alertas, historial, evoluciones, interconsultas
+ * y resultados de laboratorio.
+ */
 export default function HistorialPage() {
   const profile = useSessionStore((s) => s.profile)
   const role = profile?.role ?? 'secretaria'
-  const esPersonalMedico = ['medico', 'admin', 'super_root'].includes(role)
-  const puedeVerExpediente = esPersonalMedico || role === 'secretaria'
+  const puedeVerExpediente = ['medico', 'admin', 'super_root', 'secretaria'].includes(role)
 
   const [q, setQ] = useState('')
   const [pacienteId, setPacienteId] = useState<string | null>(null)
@@ -132,14 +130,15 @@ export default function HistorialPage() {
 
   return (
     <div className="space-y-5">
-      <div>
+      <header className="print:hidden">
         <h1 className="text-xl font-bold text-slate-800">Historial Médico Digital</h1>
         <p className="text-sm text-slate-500">
-          Expediente clínico compartido, notas privadas e interconsultas entre especialidades.
+          Lectura, impresión y descarga del expediente completo del paciente (anamnesis, historial,
+          laboratorio y resultados). La gestión clínica se realiza en el módulo Expediente.
         </p>
-      </div>
+      </header>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="print:hidden rounded-2xl border border-slate-200 bg-white p-4">
         <label className="mb-1 block text-sm font-medium text-slate-700">Buscar paciente por cédula o nombre</label>
         <input
           value={q}
@@ -163,9 +162,9 @@ export default function HistorialPage() {
       </div>
 
       {pacienteId ? (
-        <ExpedienteView key={pacienteId} pacienteId={pacienteId} />
+        <ExpedienteVista key={pacienteId} pacienteId={pacienteId} />
       ) : (
-        <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+        <p className="print:hidden rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
           Selecciona un paciente para abrir su expediente digital.
         </p>
       )}
@@ -173,13 +172,12 @@ export default function HistorialPage() {
   )
 }
 
-function ExpedienteView({ pacienteId }: { pacienteId: string }) {
+function ExpedienteVista({ pacienteId }: { pacienteId: string }) {
   const profile = useSessionStore((s) => s.profile)
   const role = profile?.role ?? 'secretaria'
   const esPersonalMedico = ['medico', 'admin', 'super_root'].includes(role)
-  const esAdmin = role === 'admin' || role === 'super_root'
-
-  const [tab, setTab] = useState<'compartido' | 'privadas' | 'interconsultas' | 'cuestionario' | 'resultados'>('compartido')
+  const branding = useConfigStore()
+  const [descargando, setDescargando] = useState(false)
 
   const { data: expediente, isLoading } = useQuery<Expediente>({
     queryKey: ['historial', 'expediente', pacienteId],
@@ -187,215 +185,138 @@ function ExpedienteView({ pacienteId }: { pacienteId: string }) {
     enabled: true,
   })
 
-  // La secretaria solo accede a la sección de resultados de laboratorio.
-  const tabs = esPersonalMedico
-    ? ([
-        ['compartido', 'Compartido'],
-        ['privadas', 'Notas privadas'],
-        ['interconsultas', 'Interconsultas'],
-        ['cuestionario', 'Cuestionario'],
-        ['resultados', 'Laboratorio'],
-      ] as const)
-    : ([['resultados', 'Laboratorio']] as const)
+  const { data: evoluciones = [] } = useQuery<Evolucion[]>({
+    queryKey: ['historial', 'evoluciones', pacienteId],
+    queryFn: async () => (await api.get('/expediente/evoluciones', { params: { paciente_id: pacienteId } })).data,
+    enabled: esPersonalMedico,
+  })
 
-  const tabActual = tabs.some(([t]) => t === tab) ? tab : 'resultados'
+  const { data: def } = useQuery<Definicion>({
+    queryKey: ['cuestionarios', 'definicion'],
+    queryFn: async () => (await api.get('/historial/cuestionarios/definicion')).data,
+    staleTime: Infinity,
+  })
+
+  const { data: lista = [] } = useQuery<Cuestionario[]>({
+    queryKey: ['cuestionarios', 'expediente', pacienteId],
+    queryFn: async () => (await api.get(`/historial/pacientes/${pacienteId}/cuestionarios`)).data,
+  })
+
+  const resumen = computarResumen(def, lista)
+
+  async function descargar() {
+    if (!expediente) return
+    setDescargando(true)
+    try {
+      const datos: DatosExpedientePdf = {
+        paciente: {
+          nombre_completo: expediente.paciente.nombre_completo,
+          cedula: expediente.paciente.cedula,
+          telefono: expediente.paciente.telefono ?? null,
+          fecha_nacimiento: expediente.paciente.fecha_nacimiento ?? null,
+          sexo: expediente.paciente.sexo ?? null,
+        },
+        alertas: expediente.alertas_criticas ?? [],
+        anamnesis: resumen.modulos,
+        observaciones: resumen.observaciones,
+        historial: esPersonalMedico ? (expediente.historial ?? []) : [],
+        evoluciones: esPersonalMedico ? (evoluciones as DatosExpedientePdf['evoluciones']) : [],
+        interconsultas: esPersonalMedico ? (expediente.interconsultas ?? []) : [],
+        resultados: (expediente.resultados_laboratorio ?? []) as DatosExpedientePdf['resultados'],
+        branding: {
+          razon_social: branding.razon_social,
+          rif: branding.rif,
+          direccion: branding.direccion,
+          telefono: branding.telefono,
+          logo_url: branding.logo_url,
+        },
+      }
+      await descargarExpedientePdf(datos)
+    } finally {
+      setDescargando(false)
+    }
+  }
+
+  if (isLoading) return <p className="p-6 text-sm text-slate-500">Cargando expediente…</p>
 
   return (
     <div className="space-y-4">
-      <BannerAlertas pacienteId={pacienteId} alertas={expediente?.alertas_criticas ?? []} esAdmin={esAdmin} />
-
-      <ResumenAnamnesis pacienteId={pacienteId} />
-
-      <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4">
+      {/* Barra de acciones: imprimir / descargar PDF */}
+      <div className="print:hidden flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-4">
         <div>
-          <p className="text-base font-bold text-slate-800">{expediente?.paciente?.nombre_completo ?? 'Cargando…'}</p>
+          <p className="text-base font-bold text-slate-800">{expediente?.paciente?.nombre_completo ?? 'Paciente'}</p>
           <p className="text-sm text-slate-500">
             {expediente?.paciente?.cedula ?? 'Menor de edad'}
             {expediente?.paciente?.fecha_nacimiento ? ` · ${expediente.paciente.fecha_nacimiento}` : ''}
           </p>
         </div>
-        <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
-          {tabs.map(([t, label]) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium ${tabActual === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            🖨 Imprimir
+          </button>
+          <button
+            type="button"
+            onClick={descargar}
+            disabled={descargando || !expediente}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {descargando ? 'Generando PDF…' : '⬇ Descargar PDF'}
+          </button>
         </div>
       </div>
 
-      {isLoading ? (
-        <p className="p-6 text-sm text-slate-500">Cargando expediente…</p>
-      ) : tabActual === 'compartido' ? (
-        <HistorialCompartido pacienteId={pacienteId} registros={expediente?.historial ?? []} role={role} />
-      ) : tabActual === 'privadas' ? (
-        <NotasPrivadas pacienteId={pacienteId} role={role} />
-      ) : tabActual === 'interconsultas' ? (
-        <InterconsultasView pacienteId={pacienteId} interconsultas={expediente?.interconsultas ?? []} role={role} />
-      ) : tabActual === 'cuestionario' ? (
-        <CuestionarioExpediente pacienteId={pacienteId} />
-      ) : (
-        <ResultadosLaboratorio resultados={expediente?.resultados_laboratorio ?? []} />
-      )}
+      <AlertasReadOnly alertas={expediente?.alertas_criticas ?? []} />
+
+      <ResumenAnamnesis pacienteId={pacienteId} />
+
+      {esPersonalMedico && <HistorialReadOnly registros={expediente?.historial ?? []} />}
+
+      {esPersonalMedico && <EvolucionesReadOnly evoluciones={evoluciones} />}
+
+      {esPersonalMedico && <InterconsultasReadOnly interconsultas={expediente?.interconsultas ?? []} />}
+
+      <ResultadosReadOnly resultados={expediente?.resultados_laboratorio ?? []} />
     </div>
   )
 }
 
-function BannerAlertas({ pacienteId, alertas, esAdmin }: { pacienteId: string; alertas: AlertaCritica[]; esAdmin: boolean }) {
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const desactivar = useMutation({
-    mutationFn: (id: string) => api.patch(`/historial/alertas/${id}`, { activa: false }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['historial', 'expediente', pacienteId] }),
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  const crear = useMutation({
-    mutationFn: (payload: unknown) => api.post(`/historial/pacientes/${pacienteId}/alertas`, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['historial', 'expediente', pacienteId] })
-      setOpen(false)
-      setError(null)
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  function handleCrear(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    crear.mutate({ tipo: fd.get('tipo'), descripcion: fd.get('descripcion'), severidad: fd.get('severidad') })
-  }
-
+function Seccion({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border-2 border-red-200 bg-red-50 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white">⚠</span>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-red-700">Alertas críticas del paciente</h2>
-        </div>
-        <button onClick={() => setOpen((v) => !v)} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700">
-          + Nueva alerta
-        </button>
-      </div>
-      {alertas.length === 0 ? (
-        <p className="mt-2 text-xs text-red-500">Sin alertas críticas activas.</p>
-      ) : (
-        <ul className="mt-2 space-y-1">
-          {alertas.map((a) => (
-            <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg bg-white/70 px-3 py-2 text-sm">
-              <span className="text-red-800">
-                <span className="font-bold">{a.tipo.replace('_', ' ')}</span> — {a.descripcion}
-              </span>
-              <span className="flex shrink-0 items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${a.severidad === 'alta' ? 'bg-red-600 text-white' : 'bg-amber-400 text-amber-900'}`}>{a.severidad}</span>
-                {esAdmin && (
-                  <button onClick={() => desactivar.mutate(a.id)} className="text-xs text-slate-400 hover:text-slate-600" title="Desactivar alerta">
-                    ✓
-                  </button>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {error && <p className="mt-2 rounded-lg bg-red-100 px-3 py-1.5 text-xs text-red-700">{error}</p>}
-
-      {open && (
-        <form onSubmit={handleCrear} className="mt-3 grid gap-3 rounded-xl bg-white p-4 sm:grid-cols-3">
-          <Field label="Tipo *">
-            <select name="tipo" required defaultValue="" className={inputCls}>
-              <option value="" disabled>Elegir…</option>
-              <option value="alergia">Alergia</option>
-              <option value="enfermedad_cronica">Enfermedad crónica</option>
-              <option value="medicamento_critico">Medicamento crítico</option>
-            </select>
-          </Field>
-          <Field label="Severidad">
-            <select name="severidad" className={inputCls}>
-              <option value="alta">Alta</option>
-              <option value="media">Media</option>
-            </select>
-          </Field>
-          <Field label="Descripción *">
-            <input name="descripcion" required placeholder="Ej. Alergia a penicilina…" className={inputCls} />
-          </Field>
-          <div className="sm:col-span-3">
-            <button type="submit" disabled={crear.isPending} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
-              {crear.isPending ? 'Guardando…' : 'Registrar alerta'}
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
+    <section className="rounded-2xl border border-slate-200 bg-white p-4">
+      <h2 className="text-sm font-bold uppercase tracking-wide text-slate-700">{titulo}</h2>
+      <div className="mt-3">{children}</div>
+    </section>
   )
 }
 
-function HistorialCompartido({ pacienteId, registros, role }: { pacienteId: string; registros: Registro[]; role: string }) {
-  const queryClient = useQueryClient()
-  const profile = useSessionStore((s) => s.profile)
-  const esAutor = profile?.role === 'medico'
-  const [showNuevo, setShowNuevo] = useState(false)
-  const [corrigiendo, setCorrigiendo] = useState<Registro | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const crear = useMutation({
-    mutationFn: (payload: unknown) => api.post('/historial', payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['historial', 'expediente', pacienteId] })
-      setShowNuevo(false)
-      setError(null)
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  function handleNuevo(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    const titulo = String(fd.get('titulo') ?? '')
-    const tipo = String(fd.get('tipo') ?? 'evolucion')
-    const texto = String(fd.get('contenido') ?? '')
-    crear.mutate({ paciente_id: pacienteId, tipo, titulo, contenido: { texto } })
-  }
-
+function AlertasReadOnly({ alertas }: { alertas: AlertaCritica[] }) {
+  const activas = alertas.filter((a) => a.activa)
+  if (activas.length === 0) return null
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={() => setShowNuevo((v) => !v)} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
-          {showNuevo ? 'Cancelar' : '+ Nuevo registro'}
-        </button>
-      </div>
+    <Seccion titulo="Alertas críticas del paciente">
+      <ul className="space-y-1">
+        {activas.map((a) => (
+          <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm">
+            <span className="text-red-800">
+              <span className="font-bold">{a.tipo.replace('_', ' ')}</span> — {a.descripcion}
+            </span>
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${a.severidad === 'alta' ? 'bg-red-600 text-white' : 'bg-amber-400 text-amber-900'}`}>
+              {a.severidad}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Seccion>
+  )
+}
 
-      {showNuevo && (
-        <form onSubmit={handleNuevo} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Tipo *">
-              <select name="tipo" className={inputCls}>
-                {TIPOS.map((t) => (
-                  <option key={t} value={t}>{TIPO_LABEL[t]}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Título *">
-              <input name="titulo" required placeholder="Ej. Control de glicemia" className={inputCls} />
-            </Field>
-          </div>
-          <Field label="Contenido">
-            <textarea name="contenido" rows={3} placeholder="Subjetivo / objetivo / plan…" className={inputCls} />
-          </Field>
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <div>
-            <button type="submit" disabled={crear.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-              {crear.isPending ? 'Guardando…' : 'Registrar (inmutable)'}
-            </button>
-          </div>
-        </form>
-      )}
-
+function HistorialReadOnly({ registros }: { registros: Registro[] }) {
+  return (
+    <Seccion titulo="Historial clínico compartido">
       {registros.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
           El paciente no tiene registros en el historial compartido.
@@ -403,470 +324,223 @@ function HistorialCompartido({ pacienteId, registros, role }: { pacienteId: stri
       ) : (
         <div className="space-y-3">
           {registros.map((r) => (
-            <RegistroCard
-              key={r.id}
-              registro={r}
-              canCorregir={esAutor || role === 'admin' || role === 'super_root'}
-              onCorregir={() => setCorrigiendo(r)}
-            />
-          ))}
-        </div>
-      )}
-
-      {corrigiendo && (
-        <CorreccionModal
-          registro={corrigiendo}
-          onClose={() => setCorrigiendo(null)}
-          onSaved={() => queryClient.invalidateQueries({ queryKey: ['historial', 'expediente', pacienteId] })}
-        />
-      )}
-    </div>
-  )
-}
-
-function RegistroCard({ registro, canCorregir, onCorregir }: { registro: Registro; canCorregir: boolean; onCorregir: () => void }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold capitalize text-slate-600">{TIPO_LABEL[registro.tipo] ?? registro.tipo}</span>
-          <h3 className="text-sm font-bold text-slate-800">{registro.titulo}</h3>
-        </div>
-        <span className="text-xs text-slate-400">{new Date(registro.created_at).toLocaleString()}</span>
-      </div>
-      <p className="mt-1 text-xs text-slate-500">
-        {registro.medico_nombre ?? 'Médico'}
-        {registro.categoria_origen_nombre ? ` · ${registro.categoria_origen_nombre}` : ''}
-      </p>
-      <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{contenidoTexto(registro.contenido)}</pre>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="font-mono text-[10px] text-slate-300" title="Firma digital del registro">firma · {registro.firma.slice(0, 12)}…</span>
-        {canCorregir && (
-          <button onClick={onCorregir} className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
-            Corregir (Adenda / Fe de Erratas)
-          </button>
-        )}
-      </div>
-
-      {registro.correcciones.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {registro.correcciones.map((c) => (
-            <div key={c.id} className="relative overflow-hidden rounded-lg border border-amber-300 bg-amber-50 p-2">
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span className="rotate-[-18deg] text-2xl font-black uppercase tracking-widest text-amber-200/70">
-                  {c.tipo === 'fe_errata' ? 'Fe de Erratas' : 'Adenda'}
-                </span>
+            <div key={r.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold capitalize text-slate-600">
+                    {TIPO_LABEL[r.tipo] ?? r.tipo}
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-800">{r.titulo}</h3>
+                </div>
+                <span className="text-xs text-slate-400">{new Date(r.created_at).toLocaleString('es-VE')}</span>
               </div>
-              <p className="relative text-xs font-semibold uppercase text-amber-700">{c.tipo.replace('_', ' ')}</p>
-              <p className="relative whitespace-pre-wrap text-xs text-slate-700">{contenidoTexto(c.contenido)}</p>
-              <p className="relative mt-1 text-[10px] text-slate-400">
-                {c.medico_nombre ?? 'Médico'} · {new Date(c.created_at).toLocaleString()} · firma {c.firma.slice(0, 10)}…
+              <p className="mt-1 text-xs text-slate-500">
+                {r.medico_nombre ?? 'Médico'}
+                {r.categoria_origen_nombre ? ` · ${r.categoria_origen_nombre}` : ''}
               </p>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function CorreccionModal({ registro, onClose, onSaved }: { registro: Registro; onClose: () => void; onSaved: () => void }) {
-  const [error, setError] = useState<string | null>(null)
-  const corregir = useMutation({
-    mutationFn: (payload: unknown) => api.post(`/historial/${registro.id}/correcciones`, payload),
-    onSuccess: () => {
-      onSaved()
-      onClose()
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    corregir.mutate({ tipo: fd.get('tipo'), contenido: { texto: fd.get('contenido') } })
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-2xl bg-white p-6 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-between">
-          <h3 className="text-lg font-bold text-slate-800">Corregir registro</h3>
-          <button onClick={onClose} className="text-xl text-slate-400 hover:text-slate-600">×</button>
-        </div>
-        <p className="mt-1 text-xs text-slate-500">
-          {registro.titulo} — la corrección queda vinculada con marca de agua. El registro original no se modifica.
-        </p>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-          <Field label="Tipo de corrección *">
-            <select name="tipo" required defaultValue="" className={inputCls}>
-              <option value="" disabled>Elegir…</option>
-              <option value="fe_errata">Fe de Erratas</option>
-              <option value="adenda">Adenda</option>
-            </select>
-          </Field>
-          <Field label="Contenido *">
-            <textarea name="contenido" required rows={4} placeholder="Corrección o adición…" className={inputCls} />
-          </Field>
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <button type="submit" disabled={corregir.isPending} className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-            {corregir.isPending ? 'Guardando…' : 'Registrar corrección'}
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-function NotasPrivadas({ pacienteId, role }: { pacienteId: string; role: string }) {
-  const queryClient = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
-  const [editandoId, setEditandoId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const { data: notas = [] } = useQuery<{ id: string; contenido: string; created_at: string; updated_at: string }[]>({
-    queryKey: ['historial', 'notas', pacienteId],
-    queryFn: async () => (await api.get(`/historial/pacientes/${pacienteId}/notas`)).data,
-  })
-
-  const crear = useMutation({
-    mutationFn: (payload: unknown) => api.post(`/historial/pacientes/${pacienteId}/notas`, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['historial', 'notas', pacienteId] })
-      setShowForm(false)
-      setError(null)
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  const actualizar = useMutation({
-    mutationFn: ({ id, contenido }: { id: string; contenido: string }) => api.patch(`/historial/notas/${id}`, { contenido }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['historial', 'notas', pacienteId] })
-      setEditandoId(null)
-      setError(null)
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  function handleCrear(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    crear.mutate({ contenido: fd.get('contenido') })
-  }
-
-  function handleEditar(e: FormEvent<HTMLFormElement>, id: string) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    actualizar.mutate({ id, contenido: String(fd.get('contenido') ?? '') })
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <p className="text-xs text-slate-500">
-          Solo <b>tú</b> puedes ver estas notas. El historial compartido es aparte.
-        </p>
-        <button onClick={() => setShowForm((v) => !v)} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
-          {showForm ? 'Cancelar' : '+ Nueva nota privada'}
-        </button>
-        {showForm && (
-          <form onSubmit={handleCrear} className="mt-3 space-y-2">
-            <textarea name="contenido" required rows={3} placeholder="Nota solo visible para ti…" className={inputCls} />
-            <button type="submit" disabled={crear.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-              {crear.isPending ? 'Guardando…' : 'Guardar nota'}
-            </button>
-          </form>
-        )}
-        {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-      </div>
-
-      {notas.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">No tienes notas privadas para este paciente.</p>
-      ) : (
-        <div className="space-y-2">
-          {notas.map((n) => (
-            <div key={n.id} className="rounded-xl border border-slate-200 bg-white p-3">
-              {editandoId === n.id ? (
-                <form onSubmit={(e) => handleEditar(e, n.id)} className="space-y-2">
-                  <textarea name="contenido" defaultValue={n.contenido} rows={3} className={inputCls} />
-                  <button type="submit" disabled={actualizar.isPending} className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white">
-                    Guardar
-                  </button>
-                </form>
-              ) : (
-                <>
-                  <p className="whitespace-pre-wrap text-sm text-slate-700">{n.contenido}</p>
-                  <div className="mt-1 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-400">{new Date(n.updated_at).toLocaleString()}</span>
-                    <button onClick={() => setEditandoId(n.id)} className="text-xs text-brand-600 hover:text-brand-700">Editar</button>
-                  </div>
-                </>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{contenidoTexto(r.contenido)}</pre>
+              <p className="mt-1 font-mono text-[10px] text-slate-300" title="Firma digital del registro">
+                firma · {r.firma.slice(0, 12)}…
+              </p>
+              {r.correcciones.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {r.correcciones.map((c) => (
+                    <div key={c.id} className="relative overflow-hidden rounded-lg border border-amber-300 bg-amber-50 p-2">
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                        <span className="rotate-[-18deg] text-2xl font-black uppercase tracking-widest text-amber-200/70">
+                          {c.tipo === 'fe_errata' ? 'Fe de Erratas' : 'Adenda'}
+                        </span>
+                      </div>
+                      <p className="relative text-xs font-semibold uppercase text-amber-700">{c.tipo.replace('_', ' ')}</p>
+                      <p className="relative whitespace-pre-wrap text-xs text-slate-700">{contenidoTexto(c.contenido)}</p>
+                      <p className="relative mt-1 text-[10px] text-slate-400">
+                        {c.medico_nombre ?? 'Médico'} · {new Date(c.created_at).toLocaleString('es-VE')} · firma{' '}
+                        {c.firma.slice(0, 10)}…
+                      </p>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           ))}
         </div>
       )}
-      {role !== 'medico' && role !== 'admin' && role !== 'super_root' && (
-        <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">Tu rol no puede gestionar notas del historial.</p>
-      )}
-    </div>
+    </Seccion>
   )
 }
 
-function InterconsultasView({ pacienteId, interconsultas, role }: { pacienteId: string; interconsultas: Interconsulta[]; role: string }) {
-  const queryClient = useQueryClient()
-  const esPersonalMedico = ['medico', 'admin', 'super_root'].includes(role)
-  const [showDerivar, setShowDerivar] = useState(false)
-  const [responderId, setResponderId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const { data: catalogo } = useQuery<{ categorias: Categoria[]; especialidades: Especialidad[] }>({
-    queryKey: ['historial', 'especialidades'],
-    queryFn: async () => (await api.get('/historial/especialidades')).data,
-    enabled: esPersonalMedico,
-  })
-
-  const { data: bandeja = [] } = useQuery<Interconsulta[]>({
-    queryKey: ['historial', 'interconsultas', 'bandeja'],
-    queryFn: async () => (await api.get('/historial/interconsultas')).data,
-    enabled: esPersonalMedico,
-  })
-
-  const derivar = useMutation({
-    mutationFn: (payload: unknown) => api.post('/historial/interconsultas', payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['historial', 'expediente', pacienteId] })
-      queryClient.invalidateQueries({ queryKey: ['historial', 'interconsultas'] })
-      setShowDerivar(false)
-      setError(null)
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  function handleDerivar(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    derivar.mutate({
-      paciente_id: pacienteId,
-      categoria_destino: fd.get('categoria_destino'),
-      especialidad_destino: fd.get('especialidad_destino') || undefined,
-      motivo: fd.get('motivo'),
-      hipotesis: fd.get('hipotesis') || undefined,
-    })
-  }
-
+function EvolucionesReadOnly({ evoluciones }: { evoluciones: Evolucion[] }) {
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={() => setShowDerivar((v) => !v)} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
-          {showDerivar ? 'Cancelar' : '+ Derivar a especialidad'}
-        </button>
-      </div>
-
-      {showDerivar && (
-        <form onSubmit={handleDerivar} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Categoría destino *">
-              <select name="categoria_destino" required defaultValue="" onChange={() => {}} className={inputCls}>
-                <option value="" disabled>Elegir…</option>
-                {(catalogo?.categorias ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>{c.nombre}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Especialidad destino">
-              <select name="especialidad_destino" className={inputCls}>
-                <option value="">— Sin especificar —</option>
-                {(catalogo?.especialidades ?? []).map((e) => (
-                  <option key={e.id} value={e.id}>{e.nombre}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <Field label="Motivo *">
-            <input name="motivo" required placeholder="Motivo de la derivación…" className={inputCls} />
-          </Field>
-          <Field label="Hipótesis inicial">
-            <textarea name="hipotesis" rows={2} placeholder="Hipótesis diagnóstica para el especialista…" className={inputCls} />
-          </Field>
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <div>
-            <button type="submit" disabled={derivar.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-              {derivar.isPending ? 'Enviando…' : 'Enviar interconsulta'}
-            </button>
-          </div>
-        </form>
-      )}
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h3 className="text-sm font-bold text-slate-800">Interconsultas del paciente</h3>
-        {interconsultas.length === 0 ? (
-          <p className="mt-2 text-xs text-slate-400">Sin interconsultas registradas.</p>
-        ) : (
-          <div className="mt-2 space-y-2">
-            {interconsultas.map((i) => (
-              <InterconsultaCard key={i.id} ic={i} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h3 className="text-sm font-bold text-slate-800">Bandeja de especialidad</h3>
-        <p className="text-xs text-slate-500">Interconsultas dirigidas a tu categoría o las que originaste.</p>
-        {bandeja.length === 0 ? (
-          <p className="mt-2 text-xs text-slate-400">Sin interconsultas pendientes para ti.</p>
-        ) : (
-          <div className="mt-2 space-y-2">
-            {bandeja.map((i) => (
-              <div key={i.id} className="rounded-lg border border-slate-200 p-3">
-                <InterconsultaCard ic={i} />
-                {(i.estado === 'enviada' || i.estado === 'aceptada') && esPersonalMedico && (
-                  <button onClick={() => setResponderId(i.id)} className="mt-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700">
-                    Responder
-                  </button>
-                )}
+    <Seccion titulo="Evoluciones (SOAP)">
+      {evoluciones.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+          El paciente no tiene evoluciones registradas.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {evoluciones.map((ev) => (
+            <div key={ev.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-slate-400">{new Date(ev.created_at).toLocaleString('es-VE')}</span>
+                {ev.especialidad_nombre && <span className="text-xs font-medium text-slate-500">{ev.especialidad_nombre}</span>}
               </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {responderId && <ResponderModal id={responderId} onClose={() => setResponderId(null)} onSaved={() => queryClient.invalidateQueries({ queryKey: ['historial', 'interconsultas'] })} />}
-    </div>
-  )
-}
-
-function InterconsultaCard({ ic }: { ic: Interconsulta }) {
-  const estadoStyles: Record<string, string> = {
-    enviada: 'bg-blue-100 text-blue-700',
-    aceptada: 'bg-amber-100 text-amber-700',
-    completada: 'bg-green-100 text-green-700',
-    cancelada: 'bg-slate-200 text-slate-600',
-  }
-  return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${estadoStyles[ic.estado] ?? 'bg-slate-200 text-slate-600'}`}>{ic.estado}</span>
-        <span className="text-[10px] text-slate-400">{new Date(ic.created_at).toLocaleString()}</span>
-      </div>
-      <p className="mt-1 text-sm font-medium text-slate-800">{ic.motivo}</p>
-      <p className="text-xs text-slate-500">
-        → {ic.categoria_destino_nombre ?? '…'}
-        {ic.especialidad_destino_nombre ? ` (${ic.especialidad_destino_nombre})` : ''} · de {ic.medico_origen_nombre ?? 'Médico'}
-      </p>
-      {ic.hipotesis && <p className="mt-1 rounded bg-slate-50 p-2 text-xs text-slate-600">Hipótesis: {ic.hipotesis}</p>}
-      {ic.respuesta && <p className="mt-1 rounded bg-green-50 p-2 text-xs text-slate-700">Respuesta: {ic.respuesta} {ic.medico_responde_nombre ? `— ${ic.medico_responde_nombre}` : ''}</p>}
-    </div>
-  )
-}
-
-function ResponderModal({ id, onClose, onSaved }: { id: string; onClose: () => void; onSaved: () => void }) {
-  const [error, setError] = useState<string | null>(null)
-  const responder = useMutation({
-    mutationFn: (payload: unknown) => api.patch(`/historial/interconsultas/${id}`, payload),
-    onSuccess: () => {
-      onSaved()
-      onClose()
-    },
-    onError: (err) => setError(getApiError(err)),
-  })
-
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
-    responder.mutate({ estado: 'completada', respuesta: fd.get('respuesta') })
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-2xl bg-white p-6 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-between">
-          <h3 className="text-lg font-bold text-slate-800">Responder interconsulta</h3>
-          <button onClick={onClose} className="text-xl text-slate-400 hover:text-slate-600">×</button>
+              {Object.keys(ev.signos_vitales ?? {}).length > 0 && (
+                <p className="mt-2 text-xs text-slate-500">
+                  <span className="font-semibold">Signos vitales:</span>{' '}
+                  {Object.entries(ev.signos_vitales)
+                    .filter(([, v]) => v !== null && v !== undefined)
+                    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${String(v)}`)
+                    .join(' · ') || '—'}
+                </p>
+              )}
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    ['Subjetivo', ev.subjetivo],
+                    ['Objetivo', ev.objetivo],
+                    ['Evaluación', ev.evaluacion],
+                    ['Plan', ev.plan],
+                  ] as const
+                ).map(([label, texto]) =>
+                  texto ? (
+                    <div key={label} className="rounded-lg bg-slate-50 p-2">
+                      <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</dt>
+                      <dd className="mt-0.5 whitespace-pre-wrap text-sm text-slate-700">{texto}</dd>
+                    </div>
+                  ) : null,
+                )}
+              </dl>
+            </div>
+          ))}
         </div>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-          <Field label="Respuesta del especialista *">
-            <textarea name="respuesta" required rows={4} placeholder="Evaluación, hallazgos y recomendaciones…" className={inputCls} />
-          </Field>
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          <button type="submit" disabled={responder.isPending} className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-            {responder.isPending ? 'Enviando…' : 'Completar con respuesta'}
-          </button>
-        </form>
-      </div>
-    </div>
+      )}
+    </Seccion>
   )
 }
 
-function ResultadosLaboratorio({ resultados }: { resultados: ResultadoLaboratorio[] }) {
-  if (resultados.length === 0) {
-    return (
-      <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
-        El paciente no tiene exámenes de laboratorio registrados.
-      </p>
-    )
-  }
-
+function InterconsultasReadOnly({ interconsultas }: { interconsultas: Interconsulta[] }) {
   return (
-    <div className="space-y-3">
-      {resultados.map((s) => (
-        <div key={s.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-bold text-slate-800">Solicitud de exámenes</p>
-              <p className="text-xs text-slate-400">{new Date(s.fecha).toLocaleString()}</p>
+    <Seccion titulo="Interconsultas">
+      {interconsultas.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+          El paciente no tiene interconsultas registradas.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {interconsultas.map((i) => (
+            <div key={i.id} className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-slate-800">{i.motivo}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_IC_STYLE[i.estado] ?? 'bg-slate-200 text-slate-600'}`}>
+                  {i.estado}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                → {i.categoria_destino_nombre ?? i.especialidad_destino_nombre ?? 'Especialidad'} · de{' '}
+                {i.medico_origen_nombre ?? 'Médico'}
+                {i.medico_destino_nombre ? ` · para ${i.medico_destino_nombre}` : ''}
+              </p>
+              {i.hipotesis && <p className="mt-1 rounded bg-slate-50 p-2 text-xs text-slate-600">Hipótesis: {i.hipotesis}</p>}
+              {i.respuesta && (
+                <p className="mt-1 rounded bg-green-50 p-2 text-xs text-slate-700">
+                  Respuesta: {i.respuesta} {i.medico_responde_nombre ? `— ${i.medico_responde_nombre}` : ''}
+                </p>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_RESULTADO_STYLE[s.estado] ?? 'bg-slate-200 text-slate-600'}`}>
-                {s.estado.replace('_', ' ')}
-              </span>
-              {s.cobrado && <span className="text-xs text-green-600">pagada</span>}
-            </div>
-          </div>
-          <div className="mt-3 space-y-2">
-            {s.lineas.map((l) => (
-              <div key={l.id} className="rounded-lg border border-slate-100 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-slate-800">{l.examen}</span>
-                  {l.resultado && (
-                    <span className="text-[10px] text-slate-400">
-                      {l.resultado.procesado_at ? new Date(l.resultado.procesado_at).toLocaleString() : ''}
-                    </span>
-                  )}
+          ))}
+        </div>
+      )}
+    </Seccion>
+  )
+}
+
+function ResultadosReadOnly({ resultados }: { resultados: ResultadoLaboratorio[] }) {
+  return (
+    <Seccion titulo="Laboratorio / Resultados">
+      {resultados.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+          El paciente no tiene exámenes de laboratorio registrados.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {resultados.map((s) => (
+            <div key={s.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-bold text-slate-800">Solicitud de exámenes</p>
+                  <p className="text-xs text-slate-400">{new Date(s.fecha).toLocaleString('es-VE')}</p>
                 </div>
-                {l.resultado ? (
-                  <p className="mt-1 text-sm text-slate-700">
-                    Resultado: {l.resultado.valores ? JSON.stringify(l.resultado.valores) : '—'}
-                    {l.resultado.observaciones && <span className="text-slate-500"> · {l.resultado.observaciones}</span>}
-                  </p>
-                ) : (
-                  <p className="mt-1 text-xs text-slate-400">Sin resultado.</p>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_RESULTADO_STYLE[s.estado] ?? 'bg-slate-200 text-slate-600'}`}>
+                    {s.estado.replace('_', ' ')}
+                  </span>
+                  {s.cobrado && <span className="text-xs text-green-600">pagada</span>}
+                </div>
               </div>
-            ))}
-          </div>
+              <div className="mt-3 space-y-2">
+                {s.lineas.map((l) => (
+                  <div key={l.id} className="rounded-lg border border-slate-100 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-slate-800">{l.examen}</span>
+                      {l.resultado && (
+                        <span className="text-[10px] text-slate-400">
+                          {l.resultado.procesado_at ? new Date(l.resultado.procesado_at).toLocaleString('es-VE') : ''}
+                        </span>
+                      )}
+                    </div>
+                    {l.resultado ? (
+                      <p className="mt-1 text-sm text-slate-700">
+                        Resultado: {l.resultado.valores ? JSON.stringify(l.resultado.valores) : '—'}
+                        {l.resultado.observaciones && <span className="text-slate-500"> · {l.resultado.observaciones}</span>}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-400">Sin resultado.</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      )}
+    </Seccion>
   )
 }
 
-const ESTADO_RESULTADO_STYLE: Record<string, string> = {
-  pendiente: 'bg-blue-100 text-blue-700',
-  en_proceso: 'bg-amber-100 text-amber-700',
-  listo: 'bg-green-100 text-green-700',
-  entregado: 'bg-slate-200 text-slate-600',
+interface ResumenCalculado {
+  modulos: { nombre: string; items: { etiqueta: string; detalle: string }[] }[]
+  observaciones: string
 }
 
-const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100'
+/** Resumen de anamnesis (solo puntos marcados) a partir del cuestionario activo. */
+function computarResumen(def: Definicion | undefined, lista: Cuestionario[]): ResumenCalculado {
+  const vacio: ResumenCalculado = { modulos: [], observaciones: '' }
+  if (!def) return vacio
+  const activo = lista.find((c) => c.estado === 'consolidado') ?? lista.find((c) => c.estado === 'borrador')
+  if (!activo) return vacio
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium text-slate-700">{label}</span>
-      {children}
-    </label>
-  )
+  const porClave = new Map<string, { etiqueta: string; modulo: string }>()
+  for (const m of def.modulos) {
+    for (const item of m.items) porClave.set(item.clave, { etiqueta: item.etiqueta, modulo: m.nombre })
+  }
+
+  const modulos = def.modulos
+    .map((m) => ({
+      nombre: m.nombre,
+      items: m.items
+        .filter((item) => {
+          const r = activo.respuestas?.[item.clave] as { marcado?: boolean; detalle?: string | null } | undefined
+          return r?.marcado === true
+        })
+        .map((item) => {
+          const r = activo.respuestas?.[item.clave] as { detalle?: string | null } | undefined
+          return { etiqueta: item.etiqueta, detalle: r?.detalle ?? '' }
+        }),
+    }))
+    .filter((m) => m.items.length > 0)
+
+  return {
+    modulos,
+    observaciones: String(activo.respuestas?.observaciones ?? '').trim(),
+  }
 }

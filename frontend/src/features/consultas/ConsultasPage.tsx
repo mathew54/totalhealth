@@ -6,6 +6,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd } from '../../lib/moneda'
+import type { Paciente } from '../../lib/types'
 
 type Vista = 'dia' | 'semana' | 'mes'
 
@@ -30,12 +31,6 @@ interface Consulta {
   paciente?: { id: string; cedula: string; nombre_completo: string } | null
   medico?: { id: string; nombre_completo: string; especialidad: string | null; categoria_medica: string | null } | null
   turno?: TurnoAgenda | null
-}
-
-interface Paciente {
-  id: string
-  cedula: string
-  nombre_completo: string
 }
 
 interface Medico {
@@ -106,6 +101,22 @@ const horaDe = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 const diaDe = (iso: string) => iso.slice(0, 10)
+
+function isoADateLocal(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function isoATimeLocal(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 const turnoTexto = (t: TurnoAgenda) =>
   `#${t.numero} ${TURNO_ESTILO[t.estado]?.texto ?? t.estado}`
@@ -185,8 +196,8 @@ export default function ConsultasPage() {
   }, [vista, anchor])
 
   const params = rango.fecha
-    ? { fecha: rango.fecha, ...(estado ? { estado } : {}) }
-    : { desde: rango.desde, hasta: rango.hasta, ...(estado ? { estado } : {}) }
+    ? { fecha: rango.fecha, ...(estado && estado !== 'todas' ? { estado } : {}) }
+    : { desde: rango.desde, hasta: rango.hasta, ...(estado && estado !== 'todas' ? { estado } : {}) }
 
   const { data: consultas = [], isLoading } = useQuery<Consulta[]>({
     queryKey: ['consultas', 'agenda', vista, rango.desde, rango.hasta, estado],
@@ -233,6 +244,7 @@ export default function ConsultasPage() {
   const visibles = useMemo(
     () =>
       consultas.filter((c) => {
+        if (estado === 'todas') return true
         if (estado) return c.estado === estado
         return c.estado !== 'completada' && c.estado !== 'cancelada'
       }),
@@ -311,6 +323,7 @@ export default function ConsultasPage() {
           onChange={(e) => setEstado(e.target.value)}
           className="w-auto rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500"
         >
+          <option value="todas">Todas</option>
           <option value="">Por atender</option>
           <option value="programada">Programadas</option>
           <option value="en_curso">En curso</option>
@@ -631,6 +644,12 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [showSolicitud, setShowSolicitud] = useState(false)
+  const [editando, setEditando] = useState(false)
+  const [edFecha, setEdFecha] = useState('')
+  const [edHora, setEdHora] = useState('')
+  const [edMedicoId, setEdMedicoId] = useState('')
+  const [edMotivo, setEdMotivo] = useState('')
+  const [edNotas, setEdNotas] = useState('')
 
   const { data: consulta, isLoading } = useQuery<Consulta & { paciente: Paciente }>({
     queryKey: ['consulta', consultaId],
@@ -640,6 +659,12 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
   const { data: historial } = useQuery<{ consultas: Consulta[] }>({
     queryKey: ['consulta', consultaId, 'historial'],
     queryFn: async () => (await api.get(`/consultas/${consultaId}/historial`)).data,
+  })
+
+  const { data: medicos = [] } = useQuery<Medico[]>({
+    queryKey: ['consultas', 'medicos'],
+    queryFn: async () => (await api.get('/consultas/medicos')).data,
+    enabled: profile?.role !== 'medico',
   })
 
   const base = useMemo(() => (initial ? { ...initial, ...(consulta ?? {}) } : consulta ?? initial), [consulta, initial])
@@ -654,6 +679,28 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
     onError: (err) => setError(getApiError(err)),
   })
 
+  const editarConsulta = useMutation({
+    mutationFn: (payload: unknown) => api.patch(`/consultas/${consultaId}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
+      queryClient.invalidateQueries({ queryKey: ['consulta', consultaId] })
+      queryClient.invalidateQueries({ queryKey: ['turnos'] })
+      setEditando(false)
+      setError(null)
+    },
+    onError: (err) => setError(getApiError(err)),
+  })
+
+  const eliminarConsulta = useMutation({
+    mutationFn: () => api.delete(`/consultas/${consultaId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
+      queryClient.invalidateQueries({ queryKey: ['turnos'] })
+      onClose()
+    },
+    onError: (err) => setError(getApiError(err)),
+  })
+
   function handleDiag(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
@@ -662,10 +709,36 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
 
   const esMedicoAutor = profile?.role === 'medico' && base?.medico_id === profile.id
   const puedeSala = profile?.role === 'secretaria' || profile?.role === 'admin' || profile?.role === 'super_root'
+  const puedeGestionar = esMedicoAutor || puedeSala
 
   function irSalaEspera() {
     onClose()
     navigate(`/turnos${base ? `?consulta=${encodeURIComponent(base.id)}` : ''}`)
+  }
+
+  function iniciarEdicion() {
+    setEdFecha(isoADateLocal(base?.fecha_hora))
+    setEdHora(isoATimeLocal(base?.fecha_hora))
+    setEdMedicoId(base?.medico_id ?? '')
+    setEdMotivo(base?.motivo ?? '')
+    setEdNotas(base?.notas ?? '')
+    setEditando(true)
+    setError(null)
+  }
+
+  function guardarEdicion(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    editarConsulta.mutate({
+      ...(profile?.role !== 'medico' ? { medico_id: edMedicoId || undefined } : {}),
+      fecha_hora: new Date(`${edFecha}T${edHora || '09:00'}:00`).toISOString(),
+      motivo: edMotivo || undefined,
+      notas: edNotas || undefined,
+    })
+  }
+
+  function confirmarEliminar() {
+    if (!window.confirm('¿Eliminar esta cita? Se quitará también su turno de sala de espera y los recordatorios pendientes. Esta acción no se puede deshacer.')) return
+    eliminarConsulta.mutate()
   }
 
   return (
@@ -698,41 +771,126 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
               <p className="mt-1 text-slate-700">{base.motivo ?? 'Sin motivo'}</p>
             </div>
 
-            {puedeSala && (
-              <button
-                onClick={irSalaEspera}
-                className="mt-3 w-full rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-              >
-                Ir a la sala de espera
-              </button>
-            )}
-
-            {esMedicoAutor && base.estado !== 'cancelada' && (
-              <button
-                onClick={() => setShowSolicitud(true)}
-                className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
-              >
-                Solicitar exámenes de laboratorio
-              </button>
-            )}
-
-            <div className="mt-4">
-              <h4 className="mb-1 text-sm font-semibold text-slate-700">Diagnóstico</h4>
-              {base.diagnostico ? (
-                <p className="rounded-lg bg-green-50 p-3 text-sm text-slate-700">{base.diagnostico}</p>
-              ) : esMedicoAutor ? (
-                <form onSubmit={handleDiag} className="space-y-2">
-                  <textarea name="diagnostico" required placeholder="Diagnóstico…" rows={2} className={inputCls} />
-                  <textarea name="notas" placeholder="Notas (opcional)" rows={2} className={inputCls} />
-                  {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-                  <button type="submit" disabled={setDiagnostico.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-                    {setDiagnostico.isPending ? 'Guardando…' : 'Registrar diagnóstico y cerrar'}
+            {editando ? (
+              <form onSubmit={guardarEdicion} className="mt-4 space-y-3 rounded-2xl border border-slate-200 p-4">
+                <h4 className="text-sm font-semibold text-slate-700">Editar cita</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Fecha *">
+                    <input type="date" value={edFecha} onChange={(e) => setEdFecha(e.target.value)} required className={inputCls} />
+                  </Field>
+                  <Field label="Hora *">
+                    <input type="time" value={edHora} onChange={(e) => setEdHora(e.target.value)} className={inputCls} />
+                  </Field>
+                  {profile?.role !== 'medico' && (
+                    <Field label="Médico">
+                      <select value={edMedicoId} onChange={(e) => setEdMedicoId(e.target.value)} className={inputCls}>
+                        <option value="">Sin asignar</option>
+                        {medicos.map((m) => (
+                          <option key={m.id} value={m.id}>{m.nombre_completo}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field label="Motivo">
+                    <input value={edMotivo} onChange={(e) => setEdMotivo(e.target.value)} className={inputCls} />
+                  </Field>
+                </div>
+                <Field label="Notas">
+                  <textarea value={edNotas} onChange={(e) => setEdNotas(e.target.value)} rows={2} className={inputCls} />
+                </Field>
+                {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="submit"
+                    disabled={!edFecha || editarConsulta.isPending}
+                    className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {editarConsulta.isPending ? 'Guardando…' : 'Guardar cambios'}
                   </button>
-                </form>
-              ) : (
-                <p className="text-xs text-slate-400">Pendiente.</p>
-              )}
-            </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditando(false)
+                      setError(null)
+                    }}
+                    className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
+                {puedeGestionar && base.estado !== 'completada' && (
+                  <div className="mt-3 space-y-2">
+                    {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={iniciarEdicion}
+                        className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+                      >
+                        Editar cita
+                      </button>
+                      <button
+                        onClick={confirmarEliminar}
+                        disabled={eliminarConsulta.isPending}
+                        className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-red-600 ring-1 ring-red-200 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {eliminarConsulta.isPending ? 'Eliminando…' : 'Eliminar'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {puedeSala && (
+                  <button
+                    onClick={irSalaEspera}
+                    className="mt-3 w-full rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                  >
+                    Ir a la sala de espera
+                  </button>
+                )}
+
+                {esMedicoAutor && base.estado !== 'cancelada' && (
+                  <button
+                    onClick={() => setShowSolicitud(true)}
+                    className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+                  >
+                    Solicitar exámenes de laboratorio
+                  </button>
+                )}
+
+                {puedeGestionar && (
+                  <button
+                    onClick={() => {
+                      onClose()
+                      navigate(`/imagenes?paciente_id=${encodeURIComponent(base.paciente_id)}&consulta_id=${encodeURIComponent(base.id)}`)
+                    }}
+                    className="mt-3 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                  >
+                    Adjuntar imágenes
+                  </button>
+                )}
+
+                <div className="mt-4">
+                  <h4 className="mb-1 text-sm font-semibold text-slate-700">Diagnóstico</h4>
+                  {base.diagnostico ? (
+                    <p className="rounded-lg bg-green-50 p-3 text-sm text-slate-700">{base.diagnostico}</p>
+                  ) : esMedicoAutor ? (
+                    <form onSubmit={handleDiag} className="space-y-2">
+                      <textarea name="diagnostico" required placeholder="Diagnóstico…" rows={2} className={inputCls} />
+                      <textarea name="notas" placeholder="Notas (opcional)" rows={2} className={inputCls} />
+                      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+                      <button type="submit" disabled={setDiagnostico.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+                        {setDiagnostico.isPending ? 'Guardando…' : 'Registrar diagnóstico y cerrar'}
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="text-xs text-slate-400">Pendiente.</p>
+                  )}
+                </div>
+              </>
+            )}
 
             <div className="mt-4">
               <h4 className="mb-1 text-sm font-semibold text-slate-700">Historial del paciente</h4>

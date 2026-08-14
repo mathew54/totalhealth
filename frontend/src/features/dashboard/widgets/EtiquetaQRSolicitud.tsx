@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
 import { api } from '../../../lib/api'
+import { generarQrDataUrl } from '../../../lib/qr'
 
 interface Solicitud {
   id: string
@@ -30,7 +30,7 @@ export default function EtiquetaQRSolicitud() {
     setError('')
     try {
       const payload = `TOTALHEALTH|SOLICITUD|${solicitud.id}|${solicitud.paciente?.nombre_completo ?? 'Paciente'}`
-      const url = await QRCode.toDataURL(payload, { width: 420, margin: 1, errorCorrectionLevel: 'M' })
+      const url = await generarQrDataUrl(payload)
       setQr(url)
     } catch {
       setError('No se pudo generar el QR.')

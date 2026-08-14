@@ -29,7 +29,7 @@ export default function StatCard({ label, valor, tono = 'default', hint, to }: S
     return (
       <Link
         to={to}
-        className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-brand-400"
+        className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-brand-400 focus-visible:outline-2 focus-visible:outline-brand-500"
       >
         {cuerpo}
       </Link>

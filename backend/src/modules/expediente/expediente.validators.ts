@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+export { idParamSchema } from '../../utils/schemas.js';
 
 export const pacienteIdParamSchema = z.object({ id: z.string().uuid('ID de paciente inválido') });
 
@@ -41,6 +41,10 @@ export const evolucionSchema = z.object({
 
 export const notaPrivadaSchema = z.object({
   paciente_id: z.string().uuid('Paciente inválido'),
+  contenido: z.string().min(1, 'Contenido requerido').max(8000),
+});
+
+export const notaUpdateSchema = z.object({
   contenido: z.string().min(1, 'Contenido requerido').max(8000),
 });
 

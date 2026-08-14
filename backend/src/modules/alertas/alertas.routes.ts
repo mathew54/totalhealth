@@ -3,8 +3,11 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
+import { idParamSchema } from '../../utils/schemas.js';
+import { resolverNombres } from '../../services/resolverNombres.js';
 
 const router = Router();
 router.use(authRequired);
@@ -20,8 +23,6 @@ const parametroSchema = z.object({
   critico_max: z.coerce.number().nullable().optional(),
   activo: z.boolean().optional(),
 });
-
-const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
 
 const alertasQuery = z.object({
   paciente_id: z.string().uuid('Paciente inválido').optional(),
@@ -55,7 +56,7 @@ router.get('/parametros', async (req, res, next) => {
  * POST /api/alertas/parametros
  * Crea un umbral de referencia (admin).
  */
-router.post('/parametros', requireRole('admin', 'super_root'), validate(parametroSchema), async (req, res, next) => {
+router.post('/parametros', requireRole(...ROLES_ADMIN_SUPER), validate(parametroSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof parametroSchema>;
     const { data, error } = await getSupabase().from('parametros_referencia').insert(body).select('*').single();
@@ -70,7 +71,7 @@ router.post('/parametros', requireRole('admin', 'super_root'), validate(parametr
  * PATCH /api/alertas/parametros/:id
  * Actualiza un umbral (admin).
  */
-router.patch('/parametros/:id', requireRole('admin', 'super_root'), validate(idParamSchema, 'params'), async (req, res, next) => {
+router.patch('/parametros/:id', requireRole(...ROLES_ADMIN_SUPER), validate(idParamSchema, 'params'), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const body = req.body as Partial<z.infer<typeof parametroSchema>>;
@@ -92,7 +93,7 @@ router.patch('/parametros/:id', requireRole('admin', 'super_root'), validate(idP
  * DELETE /api/alertas/parametros/:id
  * Elimina un umbral (admin).
  */
-router.delete('/parametros/:id', requireRole('admin', 'super_root'), validate(idParamSchema, 'params'), async (req, res, next) => {
+router.delete('/parametros/:id', requireRole(...ROLES_ADMIN_SUPER), validate(idParamSchema, 'params'), async (req, res, next) => {
   try {
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const { error } = await getSupabase().from('parametros_referencia').delete().eq('id', id);
@@ -144,17 +145,6 @@ router.get('/', validate(alertasQuery, 'query'), async (req, res, next) => {
     next(err);
   }
 });
-
-async function resolverNombres(tabla: string, ids: string[], idCol: string, nameCol: string): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (!ids.length) return map;
-  const { data } = await getSupabase().from(tabla).select(`${idCol}, ${nameCol}` as never);
-  for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
-    const key = r[idCol];
-    if (key != null) map.set(String(key), String(r[nameCol] ?? ''));
-  }
-  return map;
-}
 
 /**
  * PATCH /api/alertas/:id/leida

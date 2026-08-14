@@ -8,34 +8,15 @@ import { badRequest, forbidden, notFound } from '../../utils/httpError.js';
 import { recordatorioCita } from '../../services/notifier.js';
 import { decryptCampo } from '../../services/cifrado.js';
 import { conTelefonoSeparado } from '../../services/phoneNumber.js';
-import { consultasQuery, createConsultaSchema, diagnosticoSchema, idParamSchema } from './consultas.validators.js';
+import { fechaCaracasDeISO } from '../../utils/fechaCaracas.js';
+import { proximoNumeroTurno } from '../../services/turnos.js';
+import { consultasQuery, createConsultaSchema, actualizarConsultaSchema, diagnosticoSchema, idParamSchema } from './consultas.validators.js';
 
 const router = Router();
 router.use(authRequired);
 
 const CONSULTA_COLS =
   'id, paciente_id, medico_id, clinica_id, fecha_hora, motivo, diagnostico, notas, estado, created_at';
-
-/** Fecha (America/Caracas) de un ISO datetime, formato YYYY-MM-DD. */
-function fechaCaracasDe(iso: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Caracas',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(iso));
-}
-
-/** Asigna el próximo número de turno del día (mismo esquema que el módulo turnos). */
-async function proximoNumeroTurno(clinicaId: string | null, fecha: string): Promise<number> {
-  const { data } = await getSupabase()
-    .from('turnos')
-    .select('numero')
-    .eq('fecha', fecha)
-    .order('numero', { ascending: false })
-    .range(0, 0);
-  return (data?.[0]?.numero as number ?? 0) + 1;
-}
 
 /**
  * Crea el turno de sala de espera vinculado a una consulta (retroalimentación
@@ -49,7 +30,7 @@ async function asegurarTurnoConsulta(consulta: { id: string; paciente_id: string
     .maybeSingle();
   if (existente) return;
 
-  const fecha = fechaCaracasDe(consulta.fecha_hora);
+  const fecha = fechaCaracasDeISO(consulta.fecha_hora) ?? '';
   const numero = await proximoNumeroTurno(clinicaId, fecha);
   try {
     const r = await getSupabase()
@@ -310,6 +291,144 @@ router.patch(
       }
 
       res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * Elimina los recordatorios de cita pendientes vinculados a una consulta
+ * (por `metadata.consulta_id`), al reprogramar o eliminar la cita.
+ */
+async function limpiarRecordatoriosCita(consultaId: string): Promise<void> {
+  const { data: notifs } = await getSupabase().from('notificaciones').select('id, tipo, metadata, estado');
+  const aBorrar = (notifs ?? [])
+    .filter(
+      (n) =>
+        n.tipo === 'cita' &&
+        n.estado === 'pendiente' &&
+        (n.metadata as Record<string, unknown> | null)?.consulta_id === consultaId,
+    )
+    .map((n) => n.id);
+  if (aBorrar.length === 0) return;
+  await getSupabase().from('notificaciones').delete().in('id', aBorrar);
+}
+
+/**
+ * PATCH /api/consultas/:id
+ * Edita una consulta no completada (fecha/hora, médico, motivo, notas). Si cambia
+ * la fecha o el médico se refrescan los recordatorios de cita y, al cambiar la
+ * fecha, se actualiza el día del turno vinculado en la sala de espera.
+ */
+router.patch(
+  '/:id',
+  requireRole('medico', 'secretaria', 'admin', 'super_root'),
+  validate(idParamSchema, 'params'),
+  validate(actualizarConsultaSchema),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params as z.infer<typeof idParamSchema>;
+      const body = req.body as z.infer<typeof actualizarConsultaSchema>;
+      const user = req.user!;
+
+      const { data: consulta, error: getErr } = await getSupabase()
+        .from('consultas')
+        .select('id, paciente_id, medico_id, fecha_hora, estado')
+        .eq('id', id)
+        .single();
+      if (getErr || !consulta) return next(notFound('Consulta no encontrada'));
+
+      if (user.role === 'medico' && consulta.medico_id !== user.id) {
+        return next(forbidden('Solo puedes editar tus consultas'));
+      }
+      if (consulta.estado === 'completada') {
+        return next(badRequest('No se puede editar una consulta completada'));
+      }
+
+      const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (user.role !== 'medico' && body.medico_id !== undefined) updates.medico_id = body.medico_id;
+      if (body.fecha_hora !== undefined) updates.fecha_hora = body.fecha_hora;
+      if (body.motivo !== undefined) updates.motivo = body.motivo;
+      if (body.notas !== undefined) updates.notas = body.notas;
+
+      const { data: updated, error: uErr } = await getSupabase()
+        .from('consultas')
+        .update(updates)
+        .eq('id', id)
+        .select(CONSULTA_COLS)
+        .single();
+      if (uErr) return next(badRequest(uErr.message));
+
+      const fechaCambia = body.fecha_hora !== undefined && body.fecha_hora !== consulta.fecha_hora;
+      const medicoCambia = user.role !== 'medico' && body.medico_id !== undefined && body.medico_id !== consulta.medico_id;
+      if (fechaCambia || medicoCambia) {
+        await limpiarRecordatoriosCita(id);
+        if (fechaCambia) {
+          await getSupabase().from('turnos').update({ fecha: fechaCaracasDeISO(body.fecha_hora!) ?? '' }).eq('consulta_id', id);
+        }
+        const finalFecha = body.fecha_hora ?? (consulta.fecha_hora as string);
+        const finalMedico = user.role === 'medico' ? user.id : (body.medico_id ?? consulta.medico_id);
+        const [{ data: paciente }, { data: medico }] = await Promise.all([
+          getSupabase().from('pacientes').select('nombre_completo').eq('id', consulta.paciente_id).maybeSingle(),
+          getSupabase().from('profiles').select('nombre_completo').eq('id', finalMedico).maybeSingle(),
+        ]);
+        await recordatorioCita({
+          pacienteId: consulta.paciente_id,
+          nombre: (paciente?.nombre_completo as string) ?? 'Paciente',
+          fechaHora: finalFecha,
+          medicos: (medico?.nombre_completo as string) ?? 'el médico',
+          metadata: { consulta_id: id },
+        }).catch(() => {});
+      }
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * DELETE /api/consultas/:id
+ * Elimina una consulta no completada, junto con su turno de sala de espera y los
+ * recordatorios de cita pendientes. No permite eliminar consultas con exámenes
+ * asociados (mejor cancelarlas o eliminarlas desde el módulo de laboratorio).
+ */
+router.delete(
+  '/:id',
+  requireRole('medico', 'secretaria', 'admin', 'super_root'),
+  validate(idParamSchema, 'params'),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params as z.infer<typeof idParamSchema>;
+      const user = req.user!;
+
+      const { data: consulta, error: getErr } = await getSupabase()
+        .from('consultas')
+        .select('id, medico_id, estado')
+        .eq('id', id)
+        .single();
+      if (getErr || !consulta) return next(notFound('Consulta no encontrada'));
+
+      if (user.role === 'medico' && consulta.medico_id !== user.id) {
+        return next(forbidden('Solo puedes eliminar tus consultas'));
+      }
+      if (consulta.estado === 'completada') {
+        return next(badRequest('No se puede eliminar una consulta completada'));
+      }
+
+      const { data: conExamenes } = await getSupabase().from('solicitudes').select('id').eq('consulta_id', id).range(0, 0);
+      if ((conExamenes ?? []).length > 0) {
+        return next(badRequest('La consulta tiene exámenes de laboratorio asociados; cancélala en lugar de eliminarla'));
+      }
+
+      await limpiarRecordatoriosCita(id);
+      await getSupabase().from('turnos').delete().eq('consulta_id', id);
+
+      const { error: delErr } = await getSupabase().from('consultas').delete().eq('id', id);
+      if (delErr) return next(badRequest(delErr.message));
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }

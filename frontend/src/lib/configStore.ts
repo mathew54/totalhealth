@@ -8,6 +8,7 @@ export interface AppConfig {
   telefono: string
   logo_url: string
   header_color: string
+  iva: number
 }
 
 export type Theme = 'dark' | 'light'
@@ -59,6 +60,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   telefono: '',
   logo_url: '',
   header_color: '#8b5cf6',
+  iva: 0.16,
   loaded: false,
   theme: initialTheme(),
   setTheme: (t) => {

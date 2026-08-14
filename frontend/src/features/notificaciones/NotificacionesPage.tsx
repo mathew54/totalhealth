@@ -32,6 +32,15 @@ const CANAL_LABEL: Record<string, string> = { push: 'Push', whatsapp: 'WhatsApp'
 
 const inputCls = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none'
 
+/** Convierte una fecha ISO a valor de <input type="datetime-local"> (hora local). */
+function isoADatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export default function NotificacionesPage() {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -240,21 +249,170 @@ function NuevaNotificacionForm({ onSaved }: { onSaved: () => void }) {
 }
 
 function NotifCard({ n }: { n: Notificacion }) {
+  const queryClient = useQueryClient()
+  const [editando, setEditando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [canal, setCanal] = useState<Notificacion['canal']>(n.canal)
+  const [tipo, setTipo] = useState<Notificacion['tipo']>(n.tipo)
+  const [mensaje, setMensaje] = useState(n.mensaje)
+  const [programadaPara, setProgramadaPara] = useState(isoADatetimeLocal(n.programada_para))
+  const [telefono, setTelefono] = useState(n.telefono ?? '')
+  const [telPartes, setTelPartes] = useState<{ country_code?: string; local_number?: string }>({})
+
+  const invalidar = () => queryClient.invalidateQueries({ queryKey: ['notificaciones'] })
+
+  const editar = useMutation({
+    mutationFn: async () =>
+      (
+        await api.patch(`/notificaciones/${n.id}`, {
+          canal,
+          tipo,
+          mensaje,
+          programada_para: new Date(programadaPara).toISOString(),
+          telefono: telefono || undefined,
+          country_code: telPartes.country_code,
+          local_number: telPartes.local_number,
+        })
+      ).data,
+    onSuccess: () => {
+      setEditando(false)
+      setError(null)
+      invalidar()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  const eliminar = useMutation({
+    mutationFn: async () => (await api.delete(`/notificaciones/${n.id}`)).data,
+    onSuccess: () => {
+      setError(null)
+      invalidar()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  const enviarAhora = useMutation({
+    mutationFn: async () => (await api.post('/notificaciones/enviar-pendientes', { ids: [n.id] })).data,
+    onSuccess: (data: { enviadas: number; fallidas: number }) => {
+      invalidar()
+      setError(data.enviadas > 0 ? null : data.fallidas > 0 ? 'No se pudo enviar. Revisa el estado de la notificación.' : 'Sin cambios.')
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  const confirmarEliminar = () => {
+    if (!window.confirm('¿Eliminar esta notificación? Esta acción no se puede deshacer.')) return
+    eliminar.mutate()
+  }
+
   const estadoCls =
     n.estado === 'enviada'
       ? 'bg-emerald-100 text-emerald-700'
       : n.estado === 'fallida'
         ? 'bg-red-100 text-red-700'
         : 'bg-amber-100 text-amber-700'
+
+  if (editando) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Editar notificación</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Categoría</label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value as Notificacion['tipo'])} className={inputCls}>
+              {Object.entries(TIPO_LABEL).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Canal</label>
+            <select value={canal} onChange={(e) => setCanal(e.target.value as Notificacion['canal'])} className={inputCls}>
+              {Object.entries(CANAL_LABEL).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Teléfono del destinatario</label>
+            <PhoneInput
+              value={telefono}
+              onChange={(p) => {
+                setTelefono(p.telefono ?? '')
+                setTelPartes({ country_code: p.country_code, local_number: p.local_number })
+              }}
+              placeholder="+58 412 1234567"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Fecha y hora programada</label>
+            <input type="datetime-local" value={programadaPara} onChange={(e) => setProgramadaPara(e.target.value)} className={inputCls} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Mensaje</label>
+            <textarea value={mensaje} onChange={(e) => setMensaje(e.target.value)} rows={3} className={inputCls} />
+          </div>
+        </div>
+        {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            onClick={() => editar.mutate()}
+            disabled={!mensaje || !programadaPara || editar.isPending}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {editar.isPending ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+          <button
+            onClick={() => {
+              setEditando(false)
+              setError(null)
+            }}
+            className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full bg-brand-50 px-2 py-0.5 font-medium text-brand-700">{TIPO_LABEL[n.tipo] ?? n.tipo}</span>
         <span className="text-slate-400">{CANAL_LABEL[n.canal] ?? n.canal}</span>
         {n.telefono && <span className="text-slate-400">{formatearTelefono(n.telefono)}</span>}
-        <span className={`ml-auto rounded-full px-2 py-0.5 font-medium ${estadoCls}`}>{n.estado}</span>
+        <span className={`rounded-full px-2 py-0.5 font-medium ${estadoCls}`}>{n.estado}</span>
+        {n.estado !== 'enviada' && (
+          <button
+            onClick={() => {
+              setEditando(true)
+              setError(null)
+            }}
+            className="rounded-lg bg-white px-2.5 py-1 font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+          >
+            Editar
+          </button>
+        )}
+        {n.estado !== 'enviada' && (
+          <button
+            onClick={() => enviarAhora.mutate()}
+            disabled={enviarAhora.isPending}
+            className="rounded-lg bg-white px-2.5 py-1 font-medium text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-50"
+          >
+            {enviarAhora.isPending ? 'Enviando…' : 'Enviar ahora'}
+          </button>
+        )}
+        <button
+          onClick={confirmarEliminar}
+          disabled={eliminar.isPending}
+          className="ml-auto rounded-lg bg-white px-2.5 py-1 font-medium text-red-600 ring-1 ring-red-200 hover:bg-red-50 disabled:opacity-50"
+        >
+          {eliminar.isPending ? 'Eliminando…' : 'Eliminar'}
+        </button>
       </div>
       <p className="mt-2 text-sm text-slate-700">{n.mensaje}</p>
+      {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       <p className="mt-1 text-xs text-slate-400">
         {n.estado === 'enviada' && n.sent_at
           ? `Enviada ${new Date(n.sent_at).toLocaleString()}`

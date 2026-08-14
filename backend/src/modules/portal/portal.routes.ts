@@ -15,22 +15,13 @@ import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { registrarAuditoria, ipDeRequest } from '../../services/auditoria.js';
 import { obtenerTasasActivas, usdABs, montoAUsd } from '../../services/moneda.js';
 import { fechaHoyCaracas } from '../../services/bcv.js';
+import { fechaCaracasDeISO } from '../../utils/fechaCaracas.js';
 import { generarCodigoSchema, verificarSchema, reservarSchema, reprogramarSchema, cancelarSchema, idParamSchema } from './portal.validators.js';
 
 const router = Router();
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_MAX_INTENTOS = 5;
-
-/** Fecha (America/Caracas) de un ISO datetime, formato YYYY-MM-DD. */
-function fechaCaracasDe(iso: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Caracas',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(iso));
-}
 
 /** Cuerpo del POST del portal: paciente opcional (self por defecto) + respuestas.
  * Acepta pacientes cuyo `respuestas` es el esquema del cuestionario de anamnesis. */
@@ -742,7 +733,7 @@ router.patch('/reservas/:id/reprogramar', portalAuth, validate(idParamSchema, 'p
     try {
       const r = await getSupabase()
         .from('turnos')
-        .update({ fecha: fechaCaracasDe(fecha_hora) })
+        .update({ fecha: fechaCaracasDeISO(fecha_hora) ?? '' })
         .eq('consulta_id', id);
       if (r.error) throw r.error;
     } catch {

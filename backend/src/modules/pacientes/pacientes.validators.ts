@@ -47,7 +47,7 @@ export const documentoSchema = z
 
 export const cedulaSchema = documentoSchema;
 
-export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+export { idParamSchema } from '../../utils/schemas.js';
 
 /** Datos de un hijo menor que se agrega junto al alta del paciente responsable. */
 export const crearHijoSchema = z.object({

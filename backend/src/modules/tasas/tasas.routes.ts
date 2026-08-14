@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import { obtenerTasasDelDia, almacenarTasasDelDia } from '../../services/cotizaciones.js';
@@ -38,7 +39,7 @@ const seleccionarTasaSchema = z.object({
 export const publicRouter = Router();
 
 export const adminRouter = Router();
-adminRouter.use(authRequired, requireRole('admin', 'super_root'));
+adminRouter.use(authRequired, requireRole(...ROLES_ADMIN_SUPER));
 
 /** Desactiva la tasa activa de un (fecha, moneda) antes de activar otra. */
 async function desactivarPara(fecha: string, moneda: string) {

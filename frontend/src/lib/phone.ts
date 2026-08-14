@@ -1,5 +1,5 @@
 // Utilidades E.164 para el Front-end (espejo de backend/src/services/phoneNumber.ts).
-import { PAISES, VENEZUELA, type Pais } from './paises'
+import { paisesActuales, VENEZUELA, type Pais } from './paises'
 
 export interface TelefonoPartes {
   country_code: string | null
@@ -9,8 +9,10 @@ export interface TelefonoPartes {
 const limpiar = (valor: string | null | undefined): string => String(valor ?? '').trim().replace(/[\s\-().]/g, '')
 
 // Códigos E.164 de países conocidos, ordenados de mayor a menor longitud para
-// buscar el prefijo de país correcto (más largo primero).
-const CODIGOS_PAIS: string[] = Array.from(new Set(PAISES.map((p) => p.codigo))).sort((a, b) => b.length - a.length)
+// buscar el prefijo de país correcto (más largo primero). Se calcula en cada
+// llamada porque el catálogo se carga del backend (GET /config/paises).
+const codigosPais = (): string[] =>
+  Array.from(new Set(paisesActuales().map((p) => p.codigo))).sort((a, b) => b.length - a.length)
 
 /** Extrae `country_code` (+CC) y `local_number` de un string E.164 (o legado). */
 export function separarTelefono(telefono: string | null | undefined): TelefonoPartes {
@@ -22,7 +24,7 @@ export function separarTelefono(telefono: string | null | undefined): TelefonoPa
   // Con prefijo de país ('+'): identifica el código de país por el prefijo más
   // largo conocido (p.ej. +584244458116 → '+58' + '4244458116', no '584').
   if (t.startsWith('+')) {
-    for (const code of CODIGOS_PAIS) {
+    for (const code of codigosPais()) {
       if (digits.startsWith(code)) {
         const local = digits.slice(code.length)
         return { country_code: `+${code}`, local_number: local || null }
@@ -58,6 +60,7 @@ export function limpiarNumeroLocal(raw: string): string {
 export function paisDesdeCodigo(codigo: string | null | undefined): Pais {
   const sinMas = limpiar(codigo).replace(/^\+/, '')
   if (!sinMas) return VENEZUELA
+  const PAISES = paisesActuales()
   return (
     PAISES.find((p) => p.codigo === sinMas) ??
     PAISES.find((p) => p.iso2.toLowerCase() === sinMas.toLowerCase()) ??

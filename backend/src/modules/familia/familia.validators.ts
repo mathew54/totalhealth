@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const idParamSchema = z.object({ id: z.string().uuid('ID inválido') });
+export { idParamSchema } from '../../utils/schemas.js';
 
 export const vinculoSchema = z.object({
   paciente_id: z.string().uuid('Paciente inválido'),

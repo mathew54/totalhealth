@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest } from '../../utils/httpError.js';
 import {
@@ -15,7 +16,7 @@ import {
 
 const router = Router();
 
-router.use(authRequired, requireRole('admin', 'super_root'));
+router.use(authRequired, requireRole(...ROLES_ADMIN_SUPER));
 
 const pairingSchema = z.object({
   telefono: z.string().regex(/^\+?\d[\d\s-]{6,}$/, 'Teléfono inválido').transform((v) => v.replace(/[\s-]/g, '')),

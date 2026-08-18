@@ -417,6 +417,11 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
     onError: (err) => setError(getApiError(err)),
   })
 
+  const { data: convenios = [] } = useQuery<{ id: string; nombre: string; descuento_porcentaje: number; activo: boolean }[]>({
+    queryKey: ['comercial', 'convenios'],
+    queryFn: async () => (await api.get('/comercial/convenios')).data,
+  })
+
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
@@ -429,6 +434,7 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
       direccion: fd.get('direccion') || '',
       sexo: fd.get('sexo') || undefined,
       fecha_nacimiento: fd.get('fecha_nacimiento') ? new Date(String(fd.get('fecha_nacimiento'))).toISOString() : null,
+      convenio_id: fd.get('convenio_id') || null,
     }
     if (!paciente.es_menor) {
       payload.tipo_documento = tipoDoc
@@ -481,6 +487,14 @@ function EditarPacienteModal({ paciente, onClose, onSaved }: { paciente: Pacient
           </Field>
           <Field label="Fecha de nacimiento">
             <input name="fecha_nacimiento" type="date" defaultValue={paciente.fecha_nacimiento ? new Date(paciente.fecha_nacimiento).toISOString().slice(0, 10) : ''} className={inputCls} />
+          </Field>
+          <Field label="Convenio (aseguradora/empresa)">
+            <select name="convenio_id" defaultValue={(paciente as { convenio_id?: string }).convenio_id ?? ''} className={inputCls}>
+              <option value="">Sin convenio</option>
+              {(convenios ?? []).filter((c) => c.activo).map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre} ({c.descuento_porcentaje}%)</option>
+              ))}
+            </select>
           </Field>
         </div>
 

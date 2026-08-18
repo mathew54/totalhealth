@@ -59,6 +59,26 @@ export const examenSchema = z.object({
   codigo_loinc: z.string().max(30).optional().nullable(),
   codigo_externo: z.string().max(100).optional().nullable(),
   activo: z.coerce.boolean().default(true),
+  // Facturación VE: tratamiento fiscal del examen (los servicios de laboratorio
+  // pueden estar exentos de IVA según la Ley de IVA, art. 18 numeral 4).
+  impuesto: z.enum(['gravado', 'exento', 'no_sujeto']).default('gravado'),
+});
+
+const origenSchema = z.enum(['mock', 'db']);
+
+export const crearBackupSchema = z.object({
+  origen: origenSchema.optional(),
+});
+
+export const restaurarBackupSchema = z.object({
+  archivo: z.string().min(1).max(200).optional(),
+  data: z.unknown().optional(),
+}).refine((v) => v.archivo || v.data !== undefined, {
+  message: 'Indica un archivo del servidor o sube el contenido del respaldo',
+});
+
+export const resetInicialSchema = z.object({
+  origen: origenSchema.optional(),
 });
 
 export const configSchema = z.object({
@@ -73,4 +93,8 @@ export const configSchema = z.object({
     .string()
     .regex(/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/, 'Color hexadecimal invalido')
     .optional(),
+  // Facturación VE: alícuotas configurables (0.16 = 16%, 0.03 = 3%).
+  iva: z.coerce.number().min(0).max(1).optional(),
+  igtf: z.coerce.number().min(0).max(1).optional(),
+  contribuyente_especial: z.coerce.boolean().optional(),
 });

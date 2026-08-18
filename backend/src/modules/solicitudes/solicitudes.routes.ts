@@ -8,6 +8,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound, forbidden, conflict } from '../../utils/httpError.js';
 import { notificarResultadoListo } from '../../services/notifier.js';
 import { evaluarAlertas, registrarAlertas } from '../alertas/alertas.service.js';
+import { consumirReactivo } from '../../services/reactivosService.js';
 import {
   createSolicitudSchema,
   idParamSchema,
@@ -21,7 +22,7 @@ const router = Router();
 router.use(authRequired);
 
 const SOLICITUD_COLS =
-  'id, consulta_id, paciente_id, medico_id, clinica_id, fecha, estado, cobrado, nota, created_at';
+  'id, consulta_id, paciente_id, medico_id, clinica_id, fecha, estado, cobrado, nota, monto_pagado, paquete_id, created_at';
 
 /** Mapa id → examen del catálogo (para precios y nombres). */
 async function catalogoExamenes(): Promise<Map<string, { nombre: string; precio: number }>> {
@@ -68,7 +69,27 @@ router.post(
       const user = req.user!;
       const catalogo = await catalogoExamenes();
 
-      for (const examenId of body.examenes) {
+      // Exámenes: lista libre o los de un paquete comercial (Fase D).
+      let examenIds = body.examenes;
+      let paqueteId: string | null = null;
+      if (body.paquete_id) {
+        const { data: paquete } = await getSupabase()
+          .from('paquetes')
+          .select('id, activo')
+          .eq('id', body.paquete_id)
+          .maybeSingle();
+        if (!paquete || !paquete.activo) return next(badRequest('El paquete no existe o está inactivo'));
+        const { data: lineasPaquete } = await getSupabase()
+          .from('paquete_examenes')
+          .select('examen_id')
+          .eq('paquete_id', body.paquete_id);
+        if (!lineasPaquete?.length) return next(badRequest('El paquete no tiene exámenes'));
+        examenIds = lineasPaquete.map((l) => l.examen_id as string);
+        paqueteId = body.paquete_id;
+      }
+      if (!examenIds?.length) return next(badRequest('Selecciona exámenes o un paquete'));
+
+      for (const examenId of examenIds) {
         if (!catalogo.has(examenId)) return next(badRequest('Uno de los exámenes no existe'));
       }
 
@@ -92,13 +113,14 @@ router.post(
           fecha: body.fecha ?? new Date().toISOString(),
           estado: 'pendiente',
           cobrado: false,
+          paquete_id: paqueteId,
           nota: body.nota,
         })
         .select(SOLICITUD_COLS)
         .single();
       if (sErr) return next(badRequest(sErr.message));
 
-      const lineas = body.examenes.map((examen_id) => ({
+      const lineas = examenIds.map((examen_id) => ({
         solicitud_id: solicitud.id,
         examen_id,
         precio: catalogo.get(examen_id)!.precio,
@@ -160,6 +182,7 @@ router.get('/', validate(solicitudesQuery, 'query'), async (req, res, next) => {
     res.json(rows.map((s) => ({
       ...s,
       total: totales.get(s.id as string) ?? 0,
+      monto_pagado: Number(s.monto_pagado ?? 0),
       paciente: porId.get(s.paciente_id as string) ?? null,
     })));
   } catch (err) {
@@ -563,7 +586,44 @@ router.post(
         await getSupabase().from('solicitudes').update({ estado: 'listo' }).eq('id', id);
       }
 
-      res.status(201).json({ resultados: insertados, solicitud_estado: todasListas ? 'listo' : 'en_proceso', alertas_generadas: alertasGeneradas });
+      // Consumo de reactivos por línea (opcional). FEFO: nunca se consumen
+      // lotes vencidos. No bloquea la emisión: el stock insuficiente se
+      // reporta al cliente para que ajuste la carga.
+      const consumos: Array<Record<string, unknown>> = [];
+      const erroresConsumo: Array<Record<string, unknown>> = [];
+      for (const linea of lineas) {
+        if (!linea.reactivos?.length) continue;
+        for (const r of linea.reactivos) {
+          try {
+            const c = await consumirReactivo(r.reactivo_id, r.cantidad, {
+              motivo: 'Consumo por emisión de resultado',
+              usuarioId: user.id,
+              solicitudDetalleId: linea.solicitud_detalle_id,
+            });
+            consumos.push({
+              solicitud_detalle_id: linea.solicitud_detalle_id,
+              reactivo_id: r.reactivo_id,
+              consumido: c.consumido,
+              lotes: c.lotes,
+            });
+          } catch (err) {
+            erroresConsumo.push({
+              solicitud_detalle_id: linea.solicitud_detalle_id,
+              reactivo_id: r.reactivo_id,
+              error: (err as Error).message,
+            });
+          }
+        }
+      }
+
+      res.status(201).json({
+        resultados: insertados,
+        solicitud_estado: todasListas ? 'listo' : 'en_proceso',
+        alertas_generadas: alertasGeneradas,
+        consumo_reactivos: erroresConsumo.length
+          ? { aplicado: false, errores: erroresConsumo }
+          : { aplicado: true, consumos },
+      });
     } catch (err) {
       next(err);
     }

@@ -16,7 +16,7 @@ router.get('/', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('app_config')
-      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial')
       .eq('id', CONFIG_ID)
       .maybeSingle();
     if (error) return next(error);
@@ -30,6 +30,8 @@ router.get('/', async (_req, res, next) => {
           logo_url: '',
           header_color: '#8b5cf6',
           iva: 0.16,
+          igtf: 0.03,
+          contribuyente_especial: false,
         },
       ),
     );

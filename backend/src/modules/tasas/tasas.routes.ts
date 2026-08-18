@@ -156,13 +156,14 @@ adminRouter.post('/', validate(crearTasaSchema), async (req, res, next) => {
 /**
  * POST /api/admin/tasas/scraping
  * Ejecuta la extracción de cotizaciones del día (fuente primaria dolarapi;
- * respaldo BCV) y guarda las tasas (origen 'dolarapi'). Si no hay una tasa
- * activa para ese día/moneda, deja la recién almacenada como activa.
+ * respaldo BCV), guarda las tasas (origen 'dolarapi') y las deja como ACTIVAS
+ * del día (reemplaza la tasa activa previa). Es la acción explícita del admin
+ * "Actualizar tasas del día".
  */
 adminRouter.post('/scraping', async (req, res, next) => {
   try {
     const tasas = await obtenerTasasDelDia();
-    const resultado = await almacenarTasasDelDia(tasas, req.user!.id);
+    const resultado = await almacenarTasasDelDia(tasas, req.user!.id, true);
     res.json(resultado);
   } catch (err) {
     next(badRequest((err as Error).message));

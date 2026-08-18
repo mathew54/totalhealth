@@ -11,7 +11,9 @@ export function createApp() {
 
   app.use(helmet());
   app.use(cors({ origin: env.corsOrigin.split(','), credentials: true }));
-    app.use(express.json({ limit: '8mb' }));
+  // Límite amplio: la restauración de respaldos puede subir JSON grandes
+  // (incluyen imágenes clínicas embebidas como data-URL).
+  app.use(express.json({ limit: '100mb' }));
 
   if (env.nodeEnv !== 'test') app.use(morgan('dev'));
 

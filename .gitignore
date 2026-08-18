@@ -14,5 +14,8 @@ supabase/.temp/
 # Sesión de WhatsApp (Baileys) — credenciales del dispositivo vinculado
 .wa-session/
 
+# Respaldos generados desde el panel de administración (contienen datos)
+backend/backups/
+
 # Credenciales de despliegue (NO subir)
 DEPLOY_CREDENCIALES.md

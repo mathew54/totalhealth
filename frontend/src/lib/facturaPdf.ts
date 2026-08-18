@@ -31,6 +31,9 @@ export interface FacturaResp {
   moneda?: string
   tasa_usd?: number | null
   monto_usd?: number | null
+  base_exenta?: number
+  igtf?: number
+  iva_porcentaje?: number
 }
 
 export type FacturaPdfData = FacturaResp
@@ -119,10 +122,18 @@ export async function descargarFacturaPdf(data: FacturaPdfData): Promise<void> {
   const labelX = margin + width - 55
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(70)
-  doc.text('Base imponible', labelX, y)
-  doc.text(formatearMoneda(moneda, f.base), totalX, y, { align: 'right' })
+  const baseExenta = data.base_exenta ?? 0
+  const baseGravada = f.base - baseExenta
+  doc.text('Base gravada', labelX, y)
+  doc.text(formatearMoneda(moneda, baseGravada), totalX, y, { align: 'right' })
   y += 6
-  doc.text(`IVA (${Math.round(data.iva * 100)}%)`, labelX, y)
+  if (baseExenta > 0) {
+    doc.text('Base exenta', labelX, y)
+    doc.text(formatearMoneda(moneda, baseExenta), totalX, y, { align: 'right' })
+    y += 6
+  }
+  const ivaPct = data.iva_porcentaje ?? (data.base > 0 ? data.iva / data.base : 0)
+  doc.text(`IVA (${Math.round(ivaPct * 100)}%)`, labelX, y)
   doc.text(formatearMoneda(moneda, data.iva), totalX, y, { align: 'right' })
   y += 6
   if (data.descuento > 0) {
@@ -130,6 +141,15 @@ export async function descargarFacturaPdf(data: FacturaPdfData): Promise<void> {
     doc.text('Descuento', labelX, y)
     doc.text(`- ${formatearMoneda(moneda, data.descuento)}`, totalX, y, { align: 'right' })
     y += 6
+    doc.setTextColor(70)
+  }
+  const igtf = data.igtf ?? 0
+  if (igtf > 0) {
+    doc.setTextColor(126, 34, 206)
+    doc.text('IGTF', labelX, y)
+    doc.text(formatearMoneda(moneda, igtf), totalX, y, { align: 'right' })
+    y += 6
+    doc.setTextColor(70)
   }
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)

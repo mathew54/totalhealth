@@ -13,10 +13,14 @@ import { obtenerTasasActivas } from '../../services/moneda.js';
 import { montoAUsd, usdABs } from '../../services/moneda.js';
 import { encryptCampo, decryptCampo } from '../../services/cifrado.js';
 import { telefonoDesdeBody, conTelefonoSeparado } from '../../services/phoneNumber.js';
+import backupRoutes from './backup.routes.js';
 
 const router = Router();
 
 router.use(authRequired, requireRole(...ROLES_ADMIN_SUPER));
+
+// Respaldo / restauración / data inicial (reset). Hereda la auth del router admin.
+router.use('/backup', backupRoutes);
 
 /** Descifra los campos sensibles de un perfil (telefono, firma_digital) y expone
  * el teléfono como E.164 + piezas separadas (country_code / local_number). */
@@ -281,7 +285,7 @@ router.get('/examenes', async (req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('examenes_laboratorio')
-      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, codigo_loinc, codigo_externo, fecha_mapeo, activo')
+      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, codigo_loinc, codigo_externo, fecha_mapeo, impuesto, activo')
       .eq('clinica_id', req.user!.clinicaId)
       .order('nombre', { ascending: true });
     if (error) return next(error);
@@ -430,7 +434,7 @@ router.get('/config', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('app_config')
-      .select('razon_social, rif, direccion, telefono, logo_url, header_color, updated_at')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, updated_at')
       .eq('id', true)
       .maybeSingle();
     if (error) return next(error);
@@ -443,6 +447,9 @@ router.get('/config', async (_req, res, next) => {
           telefono: '',
           logo_url: '',
           header_color: '#8b5cf6',
+          iva: 0.16,
+          igtf: 0.03,
+          contribuyente_especial: false,
           updated_at: null,
         },
       ),
@@ -468,7 +475,7 @@ router.put('/config', validate(configSchema), async (req, res, next) => {
       .from('app_config')
       .update(update)
       .eq('id', true)
-      .select('razon_social, rif, direccion, telefono, logo_url, header_color, updated_at')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, updated_at')
       .single();
     if (error) return next(badRequest(error.message));
     res.json(conTelefonoSeparado(data));

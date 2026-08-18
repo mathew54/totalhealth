@@ -76,6 +76,11 @@ export const createPacienteSchema = z
     representante_id: z.string().uuid('Representante inválido').optional(),
     parentesco_representante: z.string().max(50).optional(),
     hijo: crearHijoSchema.optional(),
+    // Facturación VE: datos fiscales del receptor (RIF y dirección fiscal).
+    rif: z.string().max(30).optional().nullable(),
+    direccion_fiscal: z.string().max(300).optional().nullable(),
+    // Convenio comercial (aseguradora/empresa) del paciente.
+    convenio_id: z.string().uuid('Convenio inválido').optional().nullable(),
   })
   .superRefine((v, ctx) => {
     if (v.es_menor) {
@@ -103,6 +108,11 @@ export const updatePacienteSchema = z
     representante_id: z.string().uuid('Representante inválido').optional(),
     parentesco_representante: z.string().max(50).optional(),
     fecha_consentimiento: z.coerce.date().optional(),
+    // Facturación VE: datos fiscales del receptor (RIF y dirección fiscal).
+    rif: z.string().max(30).optional().nullable(),
+    direccion_fiscal: z.string().max(300).optional().nullable(),
+    // Convenio comercial (aseguradora/empresa) del paciente.
+    convenio_id: z.string().uuid('Convenio inválido').optional().nullable(),
   })
   .strict();
 

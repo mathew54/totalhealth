@@ -6,7 +6,7 @@ import {
   almacenarTasasDelDia,
 } from '../src/services/cotizaciones.js';
 import { getSupabase } from '../src/config/supabase.js';
-import { parseTasasBcv, parseNumeroBcv } from '../src/services/bcv.js';
+import { parseTasasBcv, parseNumeroBcv, fechaHoyCaracas } from '../src/services/bcv.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -106,5 +106,36 @@ describe('cotizaciones - persistencia', () => {
     const filas = data ?? [];
     expect(filas).toHaveLength(2);
     expect(filas.map((r: { moneda: string }) => r.moneda).sort()).toEqual(['EUR', 'USD']);
+  });
+
+  it('almacenarTasasDelDia con activar=true reemplaza la tasa activa del día', async () => {
+    // El seed mock deja tasas manuales activas para hoy; la acción explícita
+    // del admin (botón "Actualizar tasas del día") debe activar la cotización
+    // dolarapi recién guardada y desactivar la anterior.
+    const hoy = fechaHoyCaracas();
+    const { data: manualActiva } = await getSupabase()
+      .from('tasas_cambio')
+      .select('id')
+      .eq('fecha', hoy)
+      .eq('moneda', 'USD')
+      .eq('activa', true)
+      .maybeSingle();
+    expect(manualActiva).toBeTruthy();
+
+    const resultado = await almacenarTasasDelDia(
+      { usd: 770.1, eur: 890.2, fecha: hoy, fuente: 'https://ve.dolarapi.com/v1/cotizaciones' },
+      null,
+      true,
+    );
+    expect(resultado.monedas.find((m: { moneda: string }) => m.moneda === 'USD')?.activa).toBe(true);
+
+    const { data } = await getSupabase()
+      .from('tasas_cambio')
+      .select('moneda, origen, activa')
+      .eq('fecha', hoy)
+      .eq('moneda', 'USD');
+    const activas = (data ?? []).filter((r: { activa: boolean }) => r.activa);
+    expect(activas).toHaveLength(1);
+    expect(activas[0].origen).toBe('dolarapi');
   });
 });

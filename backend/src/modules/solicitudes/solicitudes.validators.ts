@@ -5,7 +5,8 @@ export { idParamSchema } from '../../utils/schemas.js';
 export const createSolicitudSchema = z.object({
   consulta_id: z.string().uuid().optional(),
   paciente_id: z.string().uuid('Paciente inválido'),
-  examenes: z.array(z.string().uuid('Examen inválido')).min(1, 'Selecciona al menos un examen'),
+  examenes: z.array(z.string().uuid('Examen inválido')).min(1, 'Selecciona al menos un examen').optional(),
+  paquete_id: z.string().uuid('Paquete inválido').optional(),
   fecha: z.string().datetime({ offset: true }).optional(),
   nota: z.string().max(1000).optional(),
 });
@@ -26,6 +27,17 @@ export const resultadosSchema = z.object({
         solicitud_detalle_id: z.string().uuid(),
         valores: z.record(z.string(), z.unknown()).optional(),
         observaciones: z.string().max(2000).optional(),
+        // Consumo de reactivos por línea (FEFO). No bloquea la emisión del
+        // resultado: si el stock es insuficiente, se reporta en la respuesta.
+        reactivos: z
+          .array(
+            z.object({
+              reactivo_id: z.string().uuid('Reactivo inválido'),
+              cantidad: z.coerce.number().positive('La cantidad debe ser mayor a 0'),
+            }),
+          )
+          .max(10)
+          .optional(),
       }),
     )
     .min(1, 'Debes cargar al menos un resultado'),

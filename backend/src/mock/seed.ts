@@ -52,6 +52,8 @@ export const SEED: Record<string, Row[]> = {
       header_color: '#8b5cf6',
       preanalitica: { habilitado: true, obligatorio: true },
       iva: 0.16,
+      igtf: 0.03,
+      contribuyente_especial: false,
       updated_at: dayAgo(30),
     },
   ],
@@ -247,14 +249,37 @@ export const SEED: Record<string, Row[]> = {
   ],
 
   reactivos: [
-    { id: '91000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, nombre: 'Tiras reactivas glucosa', lote: 'GLU-2026-01', fecha_vencimiento: '2026-12-01', cantidad: 120, alerta_minima: 30, proveedor: 'MediLab', created_at: dayAgo(30) },
-    { id: '91000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, nombre: 'HemoCue Hb 301', lote: 'HEM-2026-02', fecha_vencimiento: '2026-09-01', cantidad: 15, alerta_minima: 10, proveedor: 'BioTech', created_at: dayAgo(30) },
-    // Reactivo vencido (para probar alertas de vencimiento).
-    { id: '91000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, nombre: 'Tiras de orina 10 parámetros', lote: 'ORI-2025-11', fecha_vencimiento: '2025-11-15', cantidad: 40, alerta_minima: 20, proveedor: 'MediLab', created_at: dayAgo(120) },
+    { id: '91000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, nombre: 'Tiras reactivas glucosa', lote: 'GLU-2026-01', fecha_vencimiento: '2026-12-01', cantidad: 120, alerta_minima: 30, proveedor: 'MediLab', unidad: 'unidades', costo_unitario: null, created_at: dayAgo(30), updated_at: dayAgo(30) },
+    { id: '91000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, nombre: 'HemoCue Hb 301', lote: 'HEM-2026-02', fecha_vencimiento: '2026-09-01', cantidad: 15, alerta_minima: 10, proveedor: 'BioTech', unidad: 'unidades', costo_unitario: null, created_at: dayAgo(30), updated_at: dayAgo(30) },
+    // Reactivo vencido: su lote quedó en estado 'vencido' y la cantidad UTILIZABLE
+    // (suma de lotes activos) es 0, aunque el lote conserva las 40 unidades.
+    { id: '91000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, nombre: 'Tiras de orina 10 parámetros', lote: 'ORI-2025-11', fecha_vencimiento: '2025-11-15', cantidad: 0, alerta_minima: 20, proveedor: 'MediLab', unidad: 'unidades', costo_unitario: null, created_at: dayAgo(120), updated_at: dayAgo(120) },
     // Reactivo bajo stock (cantidad < alerta_minima).
-    { id: '91000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, nombre: 'Kit TSH ultrasensible', lote: 'TSH-2026-03', fecha_vencimiento: '2026-10-01', cantidad: 4, alerta_minima: 8, proveedor: 'Diagnóstica CR', created_at: dayAgo(45) },
+    { id: '91000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, nombre: 'Kit TSH ultrasensible', lote: 'TSH-2026-03', fecha_vencimiento: '2026-10-01', cantidad: 4, alerta_minima: 8, proveedor: 'Diagnóstica CR', unidad: 'kit', costo_unitario: 18.5, created_at: dayAgo(45), updated_at: dayAgo(45) },
     // Reactivo activo normal.
-    { id: '91000000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, nombre: 'Reactivo Colesterol enzimático', lote: 'COL-2026-05', fecha_vencimiento: '2027-03-01', cantidad: 60, alerta_minima: 15, proveedor: 'BioTech', created_at: dayAgo(60) },
+    { id: '91000000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, nombre: 'Reactivo Colesterol enzimático', lote: 'COL-2026-05', fecha_vencimiento: '2027-03-01', cantidad: 60, alerta_minima: 15, proveedor: 'BioTech', unidad: 'ml', costo_unitario: null, created_at: dayAgo(60), updated_at: dayAgo(60) },
+  ],
+
+  reactivo_lotes: [
+    { id: '9F000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000001', lote: 'GLU-2026-01', fecha_vencimiento: '2026-12-01', cantidad: 120, cantidad_inicial: 120, costo_unitario: null, estado: 'activo', fecha_recepcion: dayAgo(30).slice(0, 10), created_at: dayAgo(30), updated_at: dayAgo(30) },
+    { id: '9F000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000002', lote: 'HEM-2026-02', fecha_vencimiento: '2026-09-01', cantidad: 15, cantidad_inicial: 15, costo_unitario: null, estado: 'activo', fecha_recepcion: dayAgo(30).slice(0, 10), created_at: dayAgo(30), updated_at: dayAgo(30) },
+    { id: '9F000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000003', lote: 'ORI-2025-11', fecha_vencimiento: '2025-11-15', cantidad: 40, cantidad_inicial: 40, costo_unitario: null, estado: 'vencido', fecha_recepcion: dayAgo(120).slice(0, 10), created_at: dayAgo(120), updated_at: dayAgo(120) },
+    { id: '9F000000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000004', lote: 'TSH-2026-03', fecha_vencimiento: '2026-10-01', cantidad: 4, cantidad_inicial: 4, costo_unitario: 18.5, estado: 'activo', fecha_recepcion: dayAgo(45).slice(0, 10), created_at: dayAgo(45), updated_at: dayAgo(45) },
+    { id: '9F000000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000005', lote: 'COL-2026-05', fecha_vencimiento: '2027-03-01', cantidad: 60, cantidad_inicial: 60, costo_unitario: null, estado: 'activo', fecha_recepcion: dayAgo(60).slice(0, 10), created_at: dayAgo(60), updated_at: dayAgo(60) },
+  ],
+
+  reactivo_movimientos: [
+    { id: '9F100000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000001', lote_id: '9F000000-0000-0000-0000-000000000001', tipo: 'entrada', cantidad: 120, cantidad_anterior: 0, cantidad_posterior: 120, motivo: 'Recepción inicial', usuario_id: AUTH_USERS[3].id, solicitud_detalle_id: null, fecha: dayAgo(30) },
+    { id: '9F100000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000002', lote_id: '9F000000-0000-0000-0000-000000000002', tipo: 'entrada', cantidad: 15, cantidad_anterior: 0, cantidad_posterior: 15, motivo: 'Recepción inicial', usuario_id: AUTH_USERS[3].id, solicitud_detalle_id: null, fecha: dayAgo(30) },
+    { id: '9F100000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000003', lote_id: '9F000000-0000-0000-0000-000000000003', tipo: 'entrada', cantidad: 40, cantidad_anterior: 0, cantidad_posterior: 40, motivo: 'Recepción inicial', usuario_id: AUTH_USERS[3].id, solicitud_detalle_id: null, fecha: dayAgo(120) },
+    { id: '9F100000-0000-0000-0000-000000000004', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000004', lote_id: '9F000000-0000-0000-0000-000000000004', tipo: 'entrada', cantidad: 4, cantidad_anterior: 0, cantidad_posterior: 4, motivo: 'Recepción inicial', usuario_id: AUTH_USERS[3].id, solicitud_detalle_id: null, fecha: dayAgo(45) },
+    { id: '9F100000-0000-0000-0000-000000000005', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000005', lote_id: '9F000000-0000-0000-0000-000000000005', tipo: 'entrada', cantidad: 60, cantidad_anterior: 0, cantidad_posterior: 60, motivo: 'Recepción inicial', usuario_id: AUTH_USERS[3].id, solicitud_detalle_id: null, fecha: dayAgo(60) },
+  ],
+
+  alertas_inventario: [
+    { id: '9D000000-0000-0000-0000-000000000001', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000003', lote_id: '9F000000-0000-0000-0000-000000000003', tipo: 'vencido', mensaje: 'Lote ORI-2025-11 vencido (2025-11-15) con 40 unidades sin usar', leida: false, created_at: dayAgo(1) },
+    { id: '9D000000-0000-0000-0000-000000000002', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000004', lote_id: null, tipo: 'bajo_stock', mensaje: 'Kit TSH ultrasensible: stock 4 kit ≤ alerta mínima 8', leida: false, created_at: dayAgo(1) },
+    { id: '9D000000-0000-0000-0000-000000000003', clinica_id: CLINICA_ID, reactivo_id: '91000000-0000-0000-0000-000000000002', lote_id: '9F000000-0000-0000-0000-000000000002', tipo: 'por_vencer', mensaje: 'Lote HEM-2026-02 vence el 2026-09-01 (próximos 30 días)', leida: false, created_at: dayAgo(1) },
   ],
 
   portal_codigos: [],

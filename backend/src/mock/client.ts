@@ -115,3 +115,26 @@ export function mockTables(): Record<string, Row[]> {
 export function resetMock(): void {
   MOCK = new MockStore(structuredClone(SEED_BASE), structuredClone(AUTH_BASE))
 }
+
+/** Copia profunda del estado completo del mock (tablas + usuarios auth), para
+ * poder generar un respaldo fiel del entorno de desarrollo. */
+export function mockDump(): {
+  tables: Record<string, Row[]>
+  authUsers: { id: string; email: string; password: string }[]
+} {
+  return {
+    tables: mockTables(),
+    authUsers: structuredClone(MOCK.authUsers),
+  }
+}
+
+/** Reemplaza el estado del mock con datos externos (restauración de un backup). */
+export function setMockData(
+  tables: Record<string, Row[]>,
+  authUsers?: { id: string; email: string; password: string }[],
+): void {
+  MOCK = new MockStore(
+    structuredClone(tables),
+    structuredClone(authUsers ?? AUTH_BASE),
+  )
+}

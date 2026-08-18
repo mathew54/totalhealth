@@ -4,6 +4,8 @@ import { api, getApiError } from '../../lib/api'
 import { headerTextColor, useConfigStore } from '../../lib/configStore'
 import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
 import { WhatsAppConfig } from './WhatsAppConfig'
+import BackupsTab from './BackupsTab'
+import ComercialTab from './ComercialTab'
 import type { Profile } from '../../lib/rbac'
 import PrecioDual from '../../components/PrecioDual'
 import PhoneInput from '../../components/ui/PhoneInput'
@@ -11,16 +13,18 @@ import { PasswordInput } from '../../components/ui/PasswordInput'
 import { formatearTelefono } from '../../lib/phone'
 import { useTasaUsd, usdABs, formatearBs } from '../../lib/moneda'
 
-type Tab = 'personal' | 'examenes' | 'reporteria' | 'auditoria' | 'config' | 'umbrales' | 'integracion' | 'tasas'
+type Tab = 'personal' | 'examenes' | 'reporteria' | 'auditoria' | 'config' | 'umbrales' | 'integracion' | 'tasas' | 'backups' | 'comercial'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'personal', label: 'Personal' },
   { id: 'examenes', label: 'Exámenes' },
+  { id: 'comercial', label: 'Comercial' },
   { id: 'umbrales', label: 'Umbrales' },
   { id: 'integracion', label: 'Integración' },
   { id: 'tasas', label: 'Tasas de cambio' },
   { id: 'reporteria', label: 'Reportería' },
   { id: 'auditoria', label: 'Auditoría' },
+  { id: 'backups', label: 'Backups' },
   { id: 'config', label: 'Configuración' },
 ]
 
@@ -48,11 +52,13 @@ export default function AdminPage() {
 
       {tab === 'personal' && <PersonalTab />}
       {tab === 'examenes' && <ExamenesTab />}
+      {tab === 'comercial' && <ComercialTab />}
       {tab === 'umbrales' && <UmbralesTab />}
       {tab === 'integracion' && <IntegracionTab />}
       {tab === 'tasas' && <TasasTab />}
       {tab === 'reporteria' && <ReporteriaTab />}
       {tab === 'auditoria' && <AuditoriaTab />}
+      {tab === 'backups' && <BackupsTab />}
       {tab === 'config' && <ConfigTab />}
     </div>
   )
@@ -267,7 +273,7 @@ function PersonalTab() {
 }
 
 // ---------- Exámenes ----------
-interface Examen { id: string; nombre: string; categoria: string | null; precio: number; activo: boolean }
+interface Examen { id: string; nombre: string; categoria: string | null; precio: number; activo: boolean; impuesto: string }
 
 function ExamenesTab() {
   const queryClient = useQueryClient()
@@ -296,7 +302,7 @@ function ExamenesTab() {
   function handleAdd(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
-    add.mutate({ nombre: fd.get('nombre'), categoria: fd.get('categoria'), precio: Number(fd.get('precio') || 0) })
+    add.mutate({ nombre: fd.get('nombre'), categoria: fd.get('categoria'), precio: Number(fd.get('precio') || 0), impuesto: fd.get('impuesto') || 'gravado' })
     e.currentTarget.reset()
   }
 
@@ -306,6 +312,13 @@ function ExamenesTab() {
         <Field label="Nombre *"><input name="nombre" required className={inputCls} /></Field>
         <Field label="Categoría"><input name="categoria" className={inputCls} /></Field>
         <Field label="Precio (USD) *"><input name="precio" type="number" min={0} step="0.01" defaultValue={0} className={inputCls} /></Field>
+        <Field label="Impuesto (facturación)">
+          <select name="impuesto" defaultValue="gravado" className={inputCls}>
+            <option value="gravado">Gravado (16% IVA)</option>
+            <option value="exento">Exento de IVA</option>
+            <option value="no_sujeto">No sujeto</option>
+          </select>
+        </Field>
         <div className="flex items-end">
           <button type="submit" disabled={add.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Agregar</button>
         </div>
@@ -318,13 +331,24 @@ function ExamenesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                <tr><th className="px-4 py-3">Examen</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
+                <tr><th className="px-4 py-3">Examen</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Impuesto</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {(examenes || []).map((ex) => (
                   <tr key={ex.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-800">{ex.nombre}</td>
                     <td className="px-4 py-3 text-slate-500">{ex.categoria ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={ex.impuesto ?? 'gravado'}
+                        onChange={(e) => update.mutate({ id: ex.id, p: { impuesto: e.target.value } })}
+                        className="rounded border border-slate-300 px-2 py-1 text-xs"
+                      >
+                        <option value="gravado">Gravado</option>
+                        <option value="exento">Exento</option>
+                        <option value="no_sujeto">No sujeto</option>
+                      </select>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
                         <input type="number" defaultValue={ex.precio} onBlur={(e) => update.mutate({ id: ex.id, p: { precio: Number(e.target.value) } })} className="w-24 rounded border border-slate-300 px-2 py-1" />
@@ -703,7 +727,7 @@ interface TasaRow {
   fecha: string
   moneda: 'USD' | 'EUR'
   valor: number
-  origen: 'bcv' | 'manual'
+  origen: 'bcv' | 'dolarapi' | 'manual'
   activa: boolean
   actualizado_por: string | null
   created_at: string
@@ -712,8 +736,25 @@ interface TasaRow {
 interface TasaActiva {
   moneda: 'USD' | 'EUR'
   valor: number | null
-  origen: 'bcv' | 'manual' | null
+  origen: 'bcv' | 'dolarapi' | 'manual' | null
   fecha: string
+}
+
+const ORIGEN_TASA = {
+  dolarapi: { label: 'dolarapi automática', cls: 'bg-blue-100 text-blue-700' },
+  bcv: { label: 'BCV automática', cls: 'bg-blue-100 text-blue-700' },
+  manual: { label: 'Manual', cls: 'bg-amber-100 text-amber-700' },
+} as const
+
+function BadgeOrigenTasa({ origen }: { origen: TasaRow['origen'] }) {
+  const o = ORIGEN_TASA[origen]
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${o.cls}`}>{o.label}</span>
+}
+
+function etiquetaOrigenTasa(origen: TasaActiva['origen']): string {
+  if (!origen) return ''
+  const o = ORIGEN_TASA[origen]
+  return ` · ${o.label}`
 }
 
 function TasasTab() {
@@ -745,7 +786,7 @@ function TasasTab() {
     mutationFn: () => api.post('/admin/tasas/scraping'),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['tasas'] })
-      setMensaje(`Tasas actualizadas desde el BCV (${res.data.fecha}).`)
+      setMensaje(`Tasas actualizadas y activadas para el día ${res.data.fecha} (fuente dolarapi).`)
       setError(null)
     },
     onError: (e) => setError(getApiError(e)),
@@ -779,24 +820,24 @@ function TasasTab() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-bold text-slate-800">Tasa del día</h2>
         <p className="text-sm text-slate-500">
-          La tasa seleccionada (BCV automática o manual) se muestra en el header de la web.
+          La tasa seleccionada (dolarapi/BCV automática o manual) se muestra en el header de la web.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           {activas?.monedas.map((m) => (
             <div key={m.moneda} className="rounded-xl border border-slate-200 px-4 py-2">
-              <p className="text-xs text-slate-500">{m.moneda}{m.origen === 'bcv' ? ' · BCV' : ' · Manual'}</p>
+              <p className="text-xs text-slate-500">{m.moneda}{etiquetaOrigenTasa(m.origen)}</p>
               <p className="text-xl font-bold text-slate-800">Bs. {(m.valor ?? 0).toFixed(2)}</p>
             </div>
           ))}
           {(!activas || activas.monedas.every((m) => m.valor == null)) && (
-            <p className="text-sm text-slate-500">Sin tasa activa registrada. Crea una o ejecuta el scraping del BCV.</p>
+            <p className="text-sm text-slate-500">Sin tasa activa registrada. Crea una o ejecuta la actualización automática.</p>
           )}
           <button
             onClick={() => scraping.mutate()}
             disabled={scraping.isPending}
             className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
           >
-            {scraping.isPending ? 'Consultando BCV…' : 'Actualizar desde el BCV'}
+            {scraping.isPending ? 'Actualizando tasas…' : 'Actualizar tasas del día'}
           </button>
         </div>
       </div>
@@ -836,9 +877,7 @@ function TasasTab() {
                     <td className="px-4 py-3 font-medium text-slate-800">{t.moneda}</td>
                     <td className="px-4 py-3 text-slate-700">Bs. {t.valor.toFixed(2)}</td>
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${t.origen === 'bcv' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {t.origen === 'bcv' ? 'BCV automática' : 'Manual'}
-                      </span>
+                      <BadgeOrigenTasa origen={t.origen} />
                     </td>
                     <td className="px-4 py-3">
                       {t.activa ? (
@@ -873,7 +912,7 @@ function TasasTab() {
 const PRESETS = ['#8b5cf6', '#059669', '#0ea5e9', '#ef4444', '#f59e0b', '#0f172a']
 
 function ConfigTab() {
-  const { razon_social, rif, direccion, telefono, logo_url, header_color, apply } = useConfigStore()
+  const { razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, apply } = useConfigStore()
   const [mensaje, setMensaje] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [logoData, setLogoData] = useState<string | null>(null)
@@ -904,6 +943,8 @@ function ConfigTab() {
       local_number: fd.get('telefono_local_number') || undefined,
       logo_url: logoData ?? fd.get('logo_url'),
       header_color,
+      iva: Number(fd.get('iva') || 0) / 100,
+      igtf: Number(fd.get('igtf') || 0) / 100,
     })
   }
 
@@ -1024,6 +1065,21 @@ function ConfigTab() {
           {rif && <p className="text-xs opacity-80">R.I.F. {rif}</p>}
           {direccion && <p className="text-xs opacity-80">Dirección: {direccion}</p>}
           {telefono && <p className="text-xs opacity-80">Tel: {formatearTelefono(telefono)}</p>}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5">
+        <h2 className="text-base font-bold text-slate-800">Facturación (IVA e IGTF)</h2>
+        <p className="text-sm text-slate-500">
+          Alícuotas usadas en el cobro y la facturación. En pagos en divisas (USD) se añade el IGTF al total a cobrar.
+        </p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Field label="IVA (%)">
+            <input name="iva" type="number" min={0} max={100} step="0.01" defaultValue={Math.round(iva * 10000) / 100} className={inputCls} />
+          </Field>
+          <Field label="IGTF (%)">
+            <input name="igtf" type="number" min={0} max={100} step="0.01" defaultValue={Math.round(igtf * 10000) / 100} className={inputCls} />
+          </Field>
         </div>
       </div>
 

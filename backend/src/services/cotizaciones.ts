@@ -88,10 +88,21 @@ export interface TasasAlmacenadas {
 /**
  * Guarda las cotizaciones del día en `tasas_cambio` (origen 'dolarapi'). Si ya
  * existe una fila para (fecha, moneda, origen) la actualiza; en caso contrario
- * inserta. Si aún no hay una tasa ACTIVA para ese día/moneda, deja la recién
- * almacenada como activa (auto-selección).
+ * inserta.
+ *
+ * Activación:
+ * - Si `activar === true` (acción explícita del admin: botón "Actualizar tasas"),
+ *   la cotización recién guardada pasa a ser la ACTIVA del día y desactiva
+ *   cualquier otra activa para (fecha, moneda).
+ * - Si `activar === false` (sincronización diaria automática), se auto-selecciona
+ *   solo cuando no existe una tasa activa para ese día/moneda, respetando así
+ *   una tasa manual elegida por el admin.
  */
-export async function almacenarTasasDelDia(tasas: CotizacionDia, usuarioId: string | null): Promise<TasasAlmacenadas> {
+export async function almacenarTasasDelDia(
+  tasas: CotizacionDia,
+  usuarioId: string | null,
+  activar = false,
+): Promise<TasasAlmacenadas> {
   const entradas: Record<string, number | null> = { USD: tasas.usd, EUR: tasas.eur };
   const monedas: TasasAlmacenadas['monedas'] = [];
 
@@ -119,27 +130,45 @@ export async function almacenarTasasDelDia(tasas: CotizacionDia, usuarioId: stri
       });
     }
 
-    // Auto-selección: solo se activa si no existe ya una tasa activa hoy para la moneda.
-    const { data: activa } = await getSupabase()
-      .from('tasas_cambio')
-      .select('id')
-      .eq('fecha', tasas.fecha)
-      .eq('moneda', moneda)
-      .eq('activa', true)
-      .maybeSingle();
-
+    // Activación: el admin pidió explícitamente usar la tasa del día → la
+    // recién guardada pasa a ser activa y se desactivan las anteriores.
     let esActiva = false;
-    if (!activa) {
-      const { data: fila } = await getSupabase()
+    if (activar) {
+      await getSupabase()
+        .from('tasas_cambio')
+        .update({ activa: false })
+        .eq('fecha', tasas.fecha)
+        .eq('moneda', moneda)
+        .eq('activa', true);
+      await getSupabase()
+        .from('tasas_cambio')
+        .update({ activa: true })
+        .eq('fecha', tasas.fecha)
+        .eq('moneda', moneda)
+        .eq('origen', 'dolarapi');
+      esActiva = true;
+    } else {
+      // Auto-selección: solo si no existe ya una tasa activa hoy para la moneda.
+      const { data: activa } = await getSupabase()
         .from('tasas_cambio')
         .select('id')
         .eq('fecha', tasas.fecha)
         .eq('moneda', moneda)
-        .eq('origen', 'dolarapi')
-        .single();
-      if (fila) {
-        await getSupabase().from('tasas_cambio').update({ activa: true }).eq('id', fila.id);
-        esActiva = true;
+        .eq('activa', true)
+        .maybeSingle();
+
+      if (!activa) {
+        const { data: fila } = await getSupabase()
+          .from('tasas_cambio')
+          .select('id')
+          .eq('fecha', tasas.fecha)
+          .eq('moneda', moneda)
+          .eq('origen', 'dolarapi')
+          .single();
+        if (fila) {
+          await getSupabase().from('tasas_cambio').update({ activa: true }).eq('id', fila.id);
+          esActiva = true;
+        }
       }
     }
 

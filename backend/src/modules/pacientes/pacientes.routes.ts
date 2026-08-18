@@ -24,13 +24,13 @@ router.use(authRequired);
 const ESCRIBIR_PACIENTE = requireRole('medico', 'secretaria', 'admin', 'super_root');
 const ELIMINAR_PACIENTE = requireRole(...ROLES_ADMIN_SUPER);
 
-const PACIENTE_COLS = 'id, cedula, tipo_documento, nombre_completo, fecha_nacimiento, telefono, email, direccion, sexo, es_menor, representante_id, parentesco_representante, fecha_consentimiento, deleted_at, created_at';
+const PACIENTE_COLS = 'id, cedula, tipo_documento, nombre_completo, fecha_nacimiento, telefono, email, direccion, sexo, es_menor, representante_id, parentesco_representante, fecha_consentimiento, deleted_at, created_at, convenio_id';
 
 /** Descifra los campos sensibles de una fila de paciente (telefono) y expone el
  * teléfono como E.164 + piezas separadas (country_code / local_number). */
-function descifrarPaciente<T extends { telefono?: unknown }>(p: T): T {
+function descifrarPaciente<T extends object>(p: T): T {
   if (!p) return p;
-  const claro = decryptCampo((p.telefono as string | null | undefined) ?? null);
+  const claro = decryptCampo(((p as { telefono?: string | null }).telefono ?? null) as string | null);
   return conTelefonoSeparado({ ...p, telefono: claro });
 }
 
@@ -44,6 +44,26 @@ async function pacienteEnClinica(pacienteId: string, clinicaId: string | null): 
     .eq('clinica_id', clinicaId)
     .maybeSingle();
   return Boolean(data);
+}
+
+/** Adjunta el convenio comercial de cada paciente (id + nombre + %). */
+async function conConvenios<T extends { convenio_id?: unknown }>(rows: T[]): Promise<(T & { convenio: { id: string; nombre: string; descuento_porcentaje: number } | null })[]> {
+  const ids = [...new Set((rows ?? []).map((p) => p.convenio_id as string).filter(Boolean))];
+  const mapa = new Map<string, { id: string; nombre: string; descuento_porcentaje: number }>();
+  if (ids.length) {
+    const { data } = await getSupabase().from('convenios').select('id, nombre, descuento_porcentaje').in('id', ids);
+    for (const c of data ?? []) {
+      mapa.set(c.id as string, {
+        id: c.id as string,
+        nombre: c.nombre as string,
+        descuento_porcentaje: Number(c.descuento_porcentaje),
+      });
+    }
+  }
+  return (rows ?? []).map((p) => ({
+    ...p,
+    convenio: p.convenio_id ? (mapa.get(p.convenio_id as string) ?? null) : null,
+  }));
 }
 
 /**
@@ -101,7 +121,7 @@ router.get('/', validate(searchPacientesQuery, 'query'), async (req, res, next) 
       });
     }
 
-    res.json(pacientes.slice(0, limit).map(descifrarPaciente));
+    res.json(await conConvenios(pacientes.slice(0, limit)).then((arr) => arr.map(descifrarPaciente)));
   } catch (err) {
     next(err);
   }
@@ -189,7 +209,11 @@ router.post('/', ESCRIBIR_PACIENTE, validate(createPacienteSchema), async (req, 
       hijoRegistrado = menor;
     }
 
-    res.status(201).json({ ...descifrarPaciente(paciente), hijo: hijoRegistrado ? descifrarPaciente(hijoRegistrado) : null });
+    const [cPaciente, cHijo] = await Promise.all([
+      conConvenios([paciente]),
+      hijoRegistrado ? conConvenios([hijoRegistrado]) : Promise.resolve([] as never),
+    ]);
+    res.status(201).json({ ...descifrarPaciente(cPaciente[0]), hijo: hijoRegistrado ? descifrarPaciente(cHijo[0]) : null });
   } catch (err) {
     next(err);
   }
@@ -211,7 +235,8 @@ router.get('/:id', validate(idParamSchema, 'params'), async (req, res, next) => 
       .single();
     if (error || !paciente || paciente.deleted_at) return next(notFound('Paciente no encontrado'));
 
-    const [consultas, recipes, representante] = await Promise.all([
+    const [conConvenio, consultas, recipes, representante] = await Promise.all([
+      conConvenios([paciente]),
       getSupabase().from('consultas').select('id, fecha_hora, motivo, diagnostico, estado, medico_id').eq('paciente_id', id).order('fecha_hora', { ascending: false }),
       getSupabase().from('recipes').select('id, fecha_emision, fecha_expiracion, estado, medico_id').eq('paciente_id', id).order('fecha_emision', { ascending: false }),
       paciente.representante_id
@@ -220,7 +245,7 @@ router.get('/:id', validate(idParamSchema, 'params'), async (req, res, next) => 
     ]);
 
     res.json({
-      ...descifrarPaciente(paciente),
+      ...descifrarPaciente(conConvenio[0]),
       representante: representante?.data ?? null,
       historial: {
         consultas: consultas.data ?? [],
@@ -282,7 +307,8 @@ router.put('/:id', ESCRIBIR_PACIENTE, validate(updatePacienteSchema), validate(i
       .single();
     if (error) return next(badRequest(error.message));
 
-    res.json(descifrarPaciente(paciente));
+    const conConvenio = await conConvenios([paciente]);
+    res.json(descifrarPaciente(conConvenio[0]));
   } catch (err) {
     next(err);
   }

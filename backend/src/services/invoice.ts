@@ -15,7 +15,7 @@ export interface FacturaLinea {
 export interface Factura {
   serie: string;
   control: string;
-  tipo: 'comprobante' | 'recibo' | 'factura';
+  tipo: 'comprobante' | 'recibo' | 'factura' | 'nota_credito' | 'nota_debito';
   emisor: { razon_social: string; rif: string; direccion?: string; telefono?: string; country_code?: string | null; local_number?: string | null };
   receptor: { nombre: string; cedula: string | null };
   fecha: string; // ISO
@@ -25,6 +25,12 @@ export interface Factura {
   iva: number;
   monto: number;
   pagado: boolean;
+  /** Facturación VE: base exenta de IVA (0 si todo es gravado). */
+  base_exenta?: number;
+  /** IGTF aplicado en pagos en divisas (0 en Bs.). */
+  igtf?: number;
+  /** Descuento aplicado al documento (moneda del cobro). */
+  descuento?: number;
 }
 
 export function numeroEnLetras(n: number): string {

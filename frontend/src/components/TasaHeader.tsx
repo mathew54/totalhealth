@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 interface TasaMoneda {
   moneda: 'USD' | 'EUR'
   valor: number | null
-  origen: 'bcv' | 'manual' | null
+  origen: 'bcv' | 'dolarapi' | 'manual' | null
   fecha: string
 }
 
@@ -38,7 +38,11 @@ export default function TasaHeader() {
         <span key={m.moneda} className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5">
           <span className="opacity-70">{m.moneda}</span>
           <span className="font-semibold">Bs. {m.valor.toFixed(2)}</span>
-          {m.origen === 'bcv' && <span className="opacity-60" title="Tasa automática BCV">BCV</span>}
+          {(m.origen === 'bcv' || m.origen === 'dolarapi') && (
+            <span className="opacity-60" title={`Tasa automática (${m.origen})`}>
+              {m.origen === 'bcv' ? 'BCV' : 'Auto'}
+            </span>
+          )}
         </span>
       ))}
     </span>

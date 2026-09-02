@@ -31,6 +31,9 @@ export interface Factura {
   igtf?: number;
   /** Descuento aplicado al documento (moneda del cobro). */
   descuento?: number;
+  /** Retenciones fiscales VE (reducen el efectivo recibido). */
+  retencion_iva?: number;
+  retencion_islr?: number;
 }
 
 export function numeroEnLetras(n: number): string {

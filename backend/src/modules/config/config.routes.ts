@@ -16,7 +16,7 @@ router.get('/', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('app_config')
-      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, retencion_iva_pct, retencion_islr_pct')
       .eq('id', CONFIG_ID)
       .maybeSingle();
     if (error) return next(error);
@@ -32,6 +32,8 @@ router.get('/', async (_req, res, next) => {
           iva: 0.16,
           igtf: 0.03,
           contribuyente_especial: false,
+          retencion_iva_pct: 0.75,
+          retencion_islr_pct: 0.03,
         },
       ),
     );

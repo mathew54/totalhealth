@@ -33,6 +33,8 @@ export interface FacturaResp {
   monto_usd?: number | null
   base_exenta?: number
   igtf?: number
+  retencion_iva?: number
+  retencion_islr?: number
   iva_porcentaje?: number
 }
 
@@ -149,6 +151,30 @@ export async function descargarFacturaPdf(data: FacturaPdfData): Promise<void> {
     doc.text('IGTF', labelX, y)
     doc.text(formatearMoneda(moneda, igtf), totalX, y, { align: 'right' })
     y += 6
+    doc.setTextColor(70)
+  }
+  const retIva = data.retencion_iva ?? 0
+  const retIslr = data.retencion_islr ?? 0
+  if (retIva > 0 || retIslr > 0) {
+    doc.setTextColor(180, 83, 9)
+    if (retIva > 0) {
+      doc.text('Retención de IVA', labelX, y)
+      doc.text(`- ${formatearMoneda(moneda, retIva)}`, totalX, y, { align: 'right' })
+      y += 6
+    }
+    if (retIslr > 0) {
+      doc.text('Retención de ISLR', labelX, y)
+      doc.text(`- ${formatearMoneda(moneda, retIslr)}`, totalX, y, { align: 'right' })
+      y += 6
+    }
+    const netoCobrado = f.monto - retIva - retIslr
+    if (netoCobrado !== f.monto) {
+      doc.setFont('helvetica', 'bold')
+      doc.text('Efectivo recibido', labelX, y)
+      doc.text(formatearMoneda(moneda, netoCobrado), totalX, y, { align: 'right' })
+      y += 6
+      doc.setFont('helvetica', 'normal')
+    }
     doc.setTextColor(70)
   }
   doc.setFont('helvetica', 'bold')

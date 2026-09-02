@@ -21,12 +21,12 @@ const FACTURA_COLS =
   'id, pago_id, solicitud_id, consulta_id, paciente_id, tipo_documento, serie, numero_factura, numero_control, moneda, tasa_usd, base_gravada, base_exenta, iva, descuento, igtf, retencion_iva, retencion_islr, total, receptor_razon_social, receptor_rif, estatus, emitida_por, fecha_emision, anulada_por, anulada_en, motivo_anulacion';
 
 /**
- * GET /api/facturas?desde=&hasta=&paciente_id=&estatus=&tipo=
+ * GET /api/facturas?desde=&hasta=&paciente_id=&solicitud_id=&estatus=&tipo=
  * Libro de facturas/recibos por rango de emisión.
  */
 router.get('/', validate(facturasQuery, 'query'), async (req, res, next) => {
   try {
-    const { desde, hasta, paciente_id, estatus, tipo } = req.query as unknown as z.infer<typeof facturasQuery>;
+    const { desde, hasta, paciente_id, solicitud_id, estatus, tipo } = req.query as unknown as z.infer<typeof facturasQuery>;
     const user = req.user!;
 
     let query = getSupabase()
@@ -37,6 +37,7 @@ router.get('/', validate(facturasQuery, 'query'), async (req, res, next) => {
     if (desde) query = query.gte('fecha_emision', `${desde}T00:00:00.000Z`);
     if (hasta) query = query.lte('fecha_emision', `${hasta}T23:59:59.999Z`);
     if (paciente_id) query = query.eq('paciente_id', paciente_id);
+    if (solicitud_id) query = query.eq('solicitud_id', solicitud_id);
     if (estatus) query = query.eq('estatus', estatus);
     if (tipo) query = query.eq('tipo_documento', tipo);
 

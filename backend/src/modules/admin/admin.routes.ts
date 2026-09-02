@@ -1,19 +1,22 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getSupabase } from '../../config/supabase.js';
 import { authRequired } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES_ADMIN_SUPER } from '../../roles.js';
 import { validate } from '../../middleware/validate.js';
-import { badRequest, forbidden } from '../../utils/httpError.js';
+import { badRequest, forbidden, notFound } from '../../utils/httpError.js';
 import { normalizeDocumento } from '../pacientes/pacientes.validators.js';
-import { auditoriaQuerySchema, configSchema, createStaffSchema, examenSchema, reporteriaQuerySchema, updateStaffSchema } from './admin.validators.js';
+import { auditoriaQuerySchema, configSchema, createStaffSchema, examenReactivosSchema, examenSchema, reporteriaQuerySchema, updateStaffSchema } from './admin.validators.js';
+import { listarReactivosDeExamen, asignarReactivosAExamen, costoReactivosDeExamenes } from '../../services/reactivosService.js';
 import { validarRenovarFirmas } from '../../services/storageService.js';
 import { obtenerTasasActivas } from '../../services/moneda.js';
 import { montoAUsd, usdABs } from '../../services/moneda.js';
 import { encryptCampo, decryptCampo } from '../../services/cifrado.js';
 import { telefonoDesdeBody, conTelefonoSeparado } from '../../services/phoneNumber.js';
 import backupRoutes from './backup.routes.js';
+import { registrarAuditoria } from '../../services/auditoria.js';
 
 const router = Router();
 
@@ -124,6 +127,16 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
       .single();
     if (error) return next(badRequest(error.message));
 
+    void registrarAuditoria(
+      {
+        accion: 'INSERT',
+        tabla: 'profiles',
+        registroId: profile.id as string,
+        detalles: { email: body.email, roles: activo, nombre_completo: body.nombre_completo },
+      },
+      user.id,
+    );
+
     res.status(201).json(descifrarPerfil(profile));
   } catch (err) {
     next(err);
@@ -202,6 +215,16 @@ router.patch('/staff/:id', validate(updateStaffSchema), async (req, res, next) =
       .select()
       .single();
     if (error) return next(badRequest(error.message));
+
+    void registrarAuditoria(
+      {
+        accion: 'UPDATE',
+        tabla: 'profiles',
+        registroId: id,
+        detalles: update,
+      },
+      user.id,
+    );
 
     res.json(descifrarPerfil(updated));
   } catch (err) {
@@ -285,11 +308,13 @@ router.get('/examenes', async (req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('examenes_laboratorio')
-      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, codigo_loinc, codigo_externo, fecha_mapeo, impuesto, activo')
+      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, codigo_loinc, codigo_externo, fecha_mapeo, impuesto, tipo_muestra, tubo, volumen_muestra, activo')
       .eq('clinica_id', req.user!.clinicaId)
       .order('nombre', { ascending: true });
     if (error) return next(error);
-    res.json(data ?? []);
+    const filas = data ?? [];
+    const costos = await costoReactivosDeExamenes(filas.map((f) => f.id as string));
+    res.json(filas.map((e) => ({ ...e, costo_reactivos: costos.get(e.id as string) ?? 0, precio: Number(e.precio) })));
   } catch (err) {
     next(err);
   }
@@ -307,6 +332,10 @@ router.post('/examenes', validate(examenSchema), async (req, res, next) => {
       .select()
       .single();
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria(
+      { accion: 'INSERT', tabla: 'examenes_laboratorio', registroId: data.id as string, detalles: body },
+      req.user!.id,
+    );
     res.status(201).json(data);
   } catch (err) {
     next(err);
@@ -329,7 +358,100 @@ router.put('/examenes/:id', validate(examenSchema.partial()), async (req, res, n
       .select()
       .single();
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria(
+      { accion: 'UPDATE', tabla: 'examenes_laboratorio', registroId: id, detalles: patch },
+      req.user!.id,
+    );
     res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/admin/examenes/:id/clonar — duplica un examen y su receta de
+ * insumos con un nuevo id y nombre "(copia)". Útil para armar perfiles
+ * compuestos (paneles) partiendo de exámenes existentes.
+ */
+router.post('/examenes/:id/clonar', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { data: original, error } = await getSupabase()
+      .from('examenes_laboratorio')
+      .select('*')
+      .eq('id', id)
+      .eq('clinica_id', req.user!.clinicaId)
+      .single();
+    if (error || !original) return next(notFound('Examen no encontrado'));
+
+    const nuevoId = randomUUID();
+    const { data: copia, error: cErr } = await getSupabase()
+      .from('examenes_laboratorio')
+      .insert({
+        ...original,
+        id: nuevoId,
+        nombre: `${original.nombre} (copia)`,
+        clinica_id: req.user!.clinicaId,
+        fecha_mapeo: null,
+      })
+      .select()
+      .single();
+    if (cErr) return next(badRequest(cErr.message));
+
+    const { data: receta } = await getSupabase()
+      .from('examenes_reactivos')
+      .select('reactivo_id, cantidad, auto')
+      .eq('examen_id', id);
+    if (receta?.length) {
+      const { error: rErr } = await getSupabase().from('examenes_reactivos').insert(
+        receta.map((r) => ({
+          examen_id: nuevoId,
+          clinica_id: req.user!.clinicaId,
+          reactivo_id: r.reactivo_id as string,
+          cantidad: r.cantidad,
+          auto: r.auto === true,
+        })),
+      );
+      if (rErr) return next(badRequest(rErr.message));
+    }
+
+    void registrarAuditoria(
+      { accion: 'INSERT', tabla: 'examenes_laboratorio', registroId: nuevoId, detalles: { clonado_de: id } },
+      req.user!.id,
+    );
+    res.status(201).json({ ...copia, costo_reactivos: await costoReactivosDeExamenes([nuevoId]).then((m) => m.get(nuevoId) ?? 0) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/admin/examenes/:id/reactivos
+ * Receta de insumos de un examen (reactivos + cantidad que consume).
+ */
+router.get('/examenes/:id/reactivos', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    res.json(await listarReactivosDeExamen(id, req.user!.clinicaId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/admin/examenes/:id/reactivos
+ * Guarda la receta completa de insumos de un examen.
+ */
+router.put('/examenes/:id/reactivos', validate(examenReactivosSchema), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { items } = req.body as z.infer<typeof examenReactivosSchema>;
+    const resultado = await asignarReactivosAExamen(id, req.user!.clinicaId, items);
+    void registrarAuditoria(
+      { accion: 'UPDATE', tabla: 'examenes_reactivos', registroId: id, detalles: { items } },
+      req.user!.id,
+    );
+    res.json(resultado);
   } catch (err) {
     next(err);
   }
@@ -399,6 +521,13 @@ function sugerenciaLoinc(nombre: string): string | null {
   return null;
 }
 
+/** Valida el formato LOINC (####-N con parte numérica de 3 a 5 dígitos, p.ej. 2093-3, 13457-7). */
+function validarLoinc(codigo: string): string | null {
+  const limpio = codigo.trim();
+  if (!/^\d{3,5}-\d$/.test(limpio)) return null;
+  return limpio;
+}
+
 /**
  * POST /api/admin/integracion/loinc/adoptar
  * Adopta la sugerencia LOINC (o un valor explícito) para un examen no mapeado.
@@ -412,14 +541,25 @@ router.post('/integracion/loinc/adoptar', async (req, res, next) => {
     };
     if (!examen_id) return next(badRequest('examen_id requerido'));
 
+    let loincInterno: string | null = null;
+    if (codigo_loinc) {
+      const valido = validarLoinc(codigo_loinc);
+      if (!valido) return next(badRequest('Código LOINC inválido. Formato esperado: número-guion-dígito (p. ej. 2093-3 o 13457-7)'));
+      loincInterno = valido;
+    }
+
     const { data, error } = await getSupabase()
       .from('examenes_laboratorio')
-      .update({ codigo_loinc: codigo_loinc ?? null, codigo_externo: codigo_externo ?? null, fecha_mapeo: new Date().toISOString() })
+      .update({ codigo_loinc: loincInterno, codigo_externo: codigo_externo ?? null, fecha_mapeo: new Date().toISOString() })
       .eq('id', examen_id)
       .select('id, nombre, codigo_loinc, codigo_externo, fecha_mapeo')
       .single();
     if (error) return next(badRequest(error.message));
     if (!data) return next(badRequest('Examen no encontrado'));
+    void registrarAuditoria(
+      { accion: 'UPDATE', tabla: 'examenes_laboratorio', registroId: examen_id, detalles: { codigo_loinc: loincInterno, codigo_externo } },
+      req.user!.id,
+    );
     res.json(data);
   } catch (err) {
     next(err);
@@ -434,7 +574,7 @@ router.get('/config', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('app_config')
-      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, updated_at')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, retencion_iva_pct, retencion_islr_pct, updated_at')
       .eq('id', true)
       .maybeSingle();
     if (error) return next(error);
@@ -450,6 +590,8 @@ router.get('/config', async (_req, res, next) => {
           iva: 0.16,
           igtf: 0.03,
           contribuyente_especial: false,
+          retencion_iva_pct: 0.75,
+          retencion_islr_pct: 0.03,
           updated_at: null,
         },
       ),
@@ -475,9 +617,13 @@ router.put('/config', validate(configSchema), async (req, res, next) => {
       .from('app_config')
       .update(update)
       .eq('id', true)
-      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, updated_at')
+      .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, retencion_iva_pct, retencion_islr_pct, updated_at')
       .single();
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria(
+      { accion: 'UPDATE', tabla: 'app_config', detalles: update },
+      req.user!.id,
+    );
     res.json(conTelefonoSeparado(data));
   } catch (err) {
     next(err);

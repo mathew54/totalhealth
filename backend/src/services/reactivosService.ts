@@ -734,3 +734,141 @@ export async function consumoResumen(opts: { dias?: number; clinicaId?: string |
 
   return { dias, por_reactivo: porReactivoArr, por_examen: porExamenArr };
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Receta de insumos por examen (examenes_reactivos)                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Receta de insumos de un examen: cada fila con el reactivo (nombre + stock
+ * utilizable) y la cantidad que el examen consume por resultado.
+ */
+export async function listarReactivosDeExamen(examenId: string, clinicaId: string | null) {
+  const { data, error } = await getSupabase()
+    .from('examenes_reactivos')
+    .select('id, reactivo_id, cantidad, auto')
+    .eq('examen_id', examenId);
+  if (error) throw error;
+  const filas = data ?? [];
+
+  const { data: reactivos } = await getSupabase()
+    .from('reactivos')
+    .select('id, nombre, unidad, cantidad, alerta_minima');
+  const porId = new Map<string, Row>((reactivos ?? []).map((r) => [r.id as string, r]));
+
+  return filas.map((f) => ({
+    id: f.id as string,
+    examen_id: examenId,
+    reactivo_id: f.reactivo_id as string,
+    nombre: (porId.get(f.reactivo_id as string)?.nombre as string) ?? 'Reactivo',
+    unidad: (porId.get(f.reactivo_id as string)?.unidad as string) ?? 'unidades',
+    stock: n(porId.get(f.reactivo_id as string)?.cantidad),
+    alerta_minima: n(porId.get(f.reactivo_id as string)?.alerta_minima),
+    cantidad: n(f.cantidad),
+    auto: f.auto === true,
+  }));
+}
+
+/**
+ * Costo total de la receta de insumos de un examen (suma cantidad × costo).
+ * Se usa para sugerir un precio mínimo de venta en el catálogo (Admin).
+ */
+export async function costoReactivosDeExamenes(examenIds: string[]): Promise<Map<string, number>> {
+  const resultado = new Map<string, number>();
+  if (!examenIds.length) return resultado;
+  for (const id of new Set(examenIds)) resultado.set(id, 0);
+
+  const { data, error } = await getSupabase()
+    .from('examenes_reactivos')
+    .select('examen_id, reactivo_id, cantidad')
+    .in('examen_id', [...resultado.keys()]);
+  if (error) throw error;
+  if (!data?.length) return resultado;
+
+  const { data: reactivos } = await getSupabase()
+    .from('reactivos')
+    .select('id, costo_unitario');
+  const costos = new Map<string, number>((reactivos ?? []).map((r) => [r.id as string, n(r.costo_unitario)]));
+
+  for (const f of data) {
+    const eid = f.examen_id as string;
+    const costo = costos.get(f.reactivo_id as string) ?? 0;
+    resultado.set(eid, n(resultado.get(eid)) + n(f.cantidad) * costo);
+  }
+  return resultado;
+}
+
+/**
+ * Guarda la receta completa de un examen (transaccional vía la API): borra las
+ * asociaciones que ya no estén y hace upsert de las indicadas.
+ */
+export async function asignarReactivosAExamen(
+  examenId: string,
+  clinicaId: string | null,
+  items: { reactivo_id: string; cantidad: number; auto?: boolean }[],
+) {
+  const idsRecibidos = items.map((i) => i.reactivo_id);
+
+  const { data: actuales } = await getSupabase()
+    .from('examenes_reactivos')
+    .select('id, reactivo_id')
+    .eq('examen_id', examenId);
+
+  const aBorrar = (actuales ?? []).filter((a) => !idsRecibidos.includes(a.reactivo_id as string));
+  if (aBorrar.length) {
+    await getSupabase().from('examenes_reactivos').delete().in('id', aBorrar.map((a) => a.id));
+  }
+
+  for (const item of items) {
+    const { error } = await getSupabase()
+      .from('examenes_reactivos')
+      .upsert(
+        {
+          examen_id: examenId,
+          clinica_id: clinicaId,
+          reactivo_id: item.reactivo_id,
+          cantidad: item.cantidad,
+          auto: item.auto ?? true,
+        },
+        { onConflict: 'examen_id,reactivo_id' },
+      );
+    if (error) throw error;
+  }
+
+  return listarReactivosDeExamen(examenId, clinicaId);
+}
+
+/**
+ * Consume automáticamente los insumos de la receta de un examen al emitir un
+ * resultado. FEFO por lote vía `consumirReactivo`. No bloquea la emisión:
+ * devuelve los consumos aplicados y los errores de stock insuficiente.
+ */
+export async function consumirReactivosDeExamen(
+  examenId: string,
+  opts: { clinicaId: string | null; usuarioId: string; solicitudDetalleId: string },
+) {
+  const { data: receta, error } = await getSupabase()
+    .from('examenes_reactivos')
+    .select('reactivo_id, cantidad')
+    .eq('examen_id', examenId)
+    .eq('auto', true);
+  if (error) throw error;
+
+  const consumos: Array<{ reactivo_id: string; cantidad: number; consumido: number; lotes: Row[] }> = [];
+  const errores: Array<{ reactivo_id: string; error: string }> = [];
+
+  for (const r of receta ?? []) {
+    try {
+      const c = await consumirReactivo(r.reactivo_id as string, n(r.cantidad), {
+        motivo: 'Consumo automático por resultado',
+        usuarioId: opts.usuarioId,
+        solicitudDetalleId: opts.solicitudDetalleId,
+      });
+      consumos.push({ reactivo_id: r.reactivo_id as string, cantidad: n(r.cantidad), consumido: c.consumido, lotes: c.lotes });
+    } catch (err) {
+      errores.push({ reactivo_id: r.reactivo_id as string, error: (err as Error).message });
+    }
+  }
+
+  return { consumos, errores };
+}

@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd } from '../../lib/moneda'
 
-interface Examen { id: string; nombre: string; precio: number; activo: boolean }
+interface Examen { id: string; nombre: string; precio: number; activo: boolean; costo_reactivos: number }
 interface Paquete {
   id: string
   nombre: string
@@ -72,12 +72,12 @@ export default function ComercialTab() {
 /** Checkbox multi-examen compartido. */
 function ExamenSelector({ ids, onToggle }: { ids: string[]; onToggle: (id: string) => void }) {
   const { data: examenes = [] } = useQuery<Examen[]>({
-    queryKey: ['examenes', 'activos'],
-    queryFn: async () => (await api.get('/examenes')).data,
+    queryKey: ['examenes', 'admin'],
+    queryFn: async () => (await api.get('/admin/examenes')).data,
   })
   return (
     <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 p-3 sm:grid-cols-2">
-      {(examenes ?? []).map((ex) => (
+      {(examenes ?? []).filter((ex) => ex.activo).map((ex) => (
         <label key={ex.id} className="flex items-center gap-1.5 text-sm text-slate-700">
           <input type="checkbox" checked={ids.includes(ex.id)} onChange={() => onToggle(ex.id)} className="accent-brand-600" />
           {ex.nombre}
@@ -98,6 +98,13 @@ function PaquetesSection() {
     queryKey: ['comercial', 'paquetes'],
     queryFn: async () => (await api.get('/comercial/paquetes')).data,
   })
+
+  const { data: allExamenes = [] } = useQuery<Examen[]>({
+    queryKey: ['examenes', 'admin'],
+    queryFn: async () => (await api.get('/admin/examenes')).data,
+  })
+  const costoMap = useMemo(() => new Map(allExamenes.map((e) => [e.id, e.costo_reactivos])), [allExamenes])
+  const costoSugerido = examenesSel.reduce((sum, id) => sum + (costoMap.get(id) ?? 0), 0)
 
   const add = useMutation({
     mutationFn: (p: unknown) => api.post('/comercial/paquetes', p),
@@ -150,6 +157,12 @@ function PaquetesSection() {
           <Field label={`Exámenes incluidos (${examenesSel.length})`}>
             <ExamenSelector ids={examenesSel} onToggle={(id) => setExamenesSel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))} />
           </Field>
+          {examenesSel.length > 0 && (
+            <p className="mt-1 text-xs text-slate-500">
+              Costo de reactivos: <span className="font-medium text-slate-700">${costoSugerido.toFixed(2)}</span>
+              {costoSugerido > 0 && <span className="ml-1 text-amber-600">(precio mínimo sugerido)</span>}
+            </p>
+          )}
         </div>
       </form>
 

@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+// Opciones fiscales del cobro (caja): IGTF opcional y retenciones VE.
+const opcionesFiscales = {
+  // Cliente al que se factura (por defecto el paciente de la solicitud).
+  paciente_id: z.string().uuid('Cliente a facturar inválido').optional(),
+  // IGTF: aplica solo en divisas; se puede excluir con igtf_aplica=false.
+  igtf_aplica: z.boolean().optional(),
+  // Retenciones según leyes VE (Ley IVA art. 27-28; Decreto 1.808 ISLR).
+  retencion_iva_aplica: z.boolean().optional(),
+  retencion_islr_aplica: z.boolean().optional(),
+};
+
 export const cobroLaboratorioSchema = z.object({
   solicitud_id: z.string().uuid('Solicitud inválida'),
   metodo: z.string().max(30).optional(),
@@ -7,6 +18,7 @@ export const cobroLaboratorioSchema = z.object({
   descuento: z.coerce.number().min(0).optional(),
   descuento_motivo: z.string().max(300).optional(),
   usar_prepago: z.boolean().optional(),
+  ...opcionesFiscales,
 });
 
 export const pagosQuery = z.object({
@@ -30,6 +42,7 @@ export const abonoSchema = z.object({
   metodo: z.string().max(30).optional(),
   moneda: z.enum(['BS', 'USD']).default('USD'),
   observaciones: z.string().max(300).optional(),
+  ...opcionesFiscales,
 });
 
 export const prepagoSchema = z.object({

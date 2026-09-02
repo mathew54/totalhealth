@@ -10,6 +10,8 @@ export interface AppConfig {
   header_color: string
   iva: number
   igtf: number
+  retencion_iva_pct: number
+  retencion_islr_pct: number
 }
 
 export type Theme = 'dark' | 'light'
@@ -63,6 +65,8 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   header_color: '#8b5cf6',
   iva: 0.16,
   igtf: 0.03,
+  retencion_iva_pct: 0.75,
+  retencion_islr_pct: 0.03,
   loaded: false,
   theme: initialTheme(),
   setTheme: (t) => {

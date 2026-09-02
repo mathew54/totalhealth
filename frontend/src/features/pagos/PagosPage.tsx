@@ -59,6 +59,14 @@ interface ReporteSaldos {
   saldos: SaldoCxc[]
 }
 
+// Opciones fiscales compartidas por el cobro y el abono desde caja.
+export interface OpcionesFiscales {
+  paciente_id?: string
+  igtf_aplica?: boolean
+  retencion_iva_aplica?: boolean
+  retencion_islr_aplica?: boolean
+}
+
 const METODOS = ['efectivo', 'punto', 'transferencia', 'pago_movil', 'zelle']
 const METODO_LABEL: Record<string, string> = {
   efectivo: 'Efectivo',
@@ -101,10 +109,11 @@ export default function PagosPage() {
       metodo: string
       moneda: string
       observaciones?: string
-    }) => api.post('/pagos/abono', payload),
+    } & OpcionesFiscales) => api.post('/pagos/abono', payload),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
       queryClient.invalidateQueries({ queryKey: ['pagos'] })
+      queryClient.invalidateQueries({ queryKey: ['facturas'] })
       queryClient.invalidateQueries({ queryKey: ['caja'] })
       setError(null)
       const data = res.data as { pago: Pago; factura?: { id: string; numero_control: string } }
@@ -123,7 +132,7 @@ export default function PagosPage() {
       descuento?: number
       descuento_motivo?: string
       usar_prepago?: boolean
-    }) => api.post('/pagos/laboratorio', payload),
+    } & OpcionesFiscales) => api.post('/pagos/laboratorio', payload),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
       queryClient.invalidateQueries({ queryKey: ['pagos'] })
@@ -249,7 +258,7 @@ export default function PagosPage() {
 function CobroCard(props: {
   solicitud: Solicitud
   loading: boolean
-  onCobrar: (d: { metodo: string; moneda: string; descuento?: number; descuento_motivo?: string; usar_prepago?: boolean }) => void
+  onCobrar: (d: { metodo: string; moneda: string; descuento?: number; descuento_motivo?: string; usar_prepago?: boolean } & OpcionesFiscales) => void
 }) {
   const { solicitud, loading, onCobrar } = props
   const [metodo, setMetodo] = useState('efectivo')
@@ -258,9 +267,14 @@ function CobroCard(props: {
   const [motivo, setMotivo] = useState('')
   const [usarPrepago, setUsarPrepago] = useState(false)
   const [verDetalle, setVerDetalle] = useState(false)
+  const [igtfAplica, setIgtfAplica] = useState(true)
+  const [retIva, setRetIva] = useState(false)
+  const [retIslr, setRetIslr] = useState(false)
   const tasaUsd = useTasaUsd()
   const ivaConfig = useConfigStore((s) => s.iva)
   const igtfConfig = useConfigStore((s) => s.igtf)
+  const retIvaPct = useConfigStore((s) => s.retencion_iva_pct)
+  const retIslrPct = useConfigStore((s) => s.retencion_islr_pct)
 
   const pacienteId = solicitud.paciente?.id
   const { data: prepago } = useQuery<{ tarjeta: { id: string; saldo_usd: number } | null }>({
@@ -288,9 +302,12 @@ function CobroCard(props: {
   const sinTasa = enBs && tasaUsd == null
   const montoMostrar = enBs ? usdABs(montoUsd, tasaUsd) : montoUsd
   const ivaMostrar = enBs ? usdABs(ivaUsd, tasaUsd) : ivaUsd
-  // IGTF: solo en cobros en divisas (USD). En Bs. lo retiene el banco del pagador.
-  const igtfUsd = enBs || !(igtfConfig > 0) ? 0 : Number((montoUsd * igtfConfig).toFixed(2))
-  const montoFinal = Number((montoUsd + igtfUsd).toFixed(2))
+  // IGTF: solo en cobros en divisas (USD) y opcional vía checkbox. En Bs. lo retiene el banco del pagador.
+  const igtfUsd = enBs || !(igtfConfig > 0) || !igtfAplica ? 0 : Number((montoUsd * igtfConfig).toFixed(2))
+  // Retenciones fiscales VE: reducen el efectivo recibido del cliente.
+  const retIvaUsd = retIva && ivaUsd > 0 ? Number((ivaUsd * retIvaPct).toFixed(2)) : 0
+  const retIslrUsd = retIslr && neto > 0 ? Number((neto * retIslrPct).toFixed(2)) : 0
+  const montoFinal = Math.max(0, Number((montoUsd + igtfUsd - retIvaUsd - retIslrUsd).toFixed(2)))
 
   return (
     <div className="flex flex-col p-4 sm:rounded-xl sm:border sm:border-slate-200 sm:gap-2">
@@ -337,11 +354,35 @@ function CobroCard(props: {
           Pagar: {sinTasa ? '—' : enBs ? `${formatearBs(montoMostrar)} (≈ $${montoUsd.toFixed(2)})` : `$${montoFinal.toFixed(2)}`}
         </span>
       </div>
-      {!enBs && igtfUsd > 0 && (
-        <p className="text-xs text-slate-500">
-          Incluye IGTF {Math.round(igtfConfig * 100)}% ({formatearBs(usdABs(igtfUsd, tasaUsd) ?? 0)} · $ {igtfUsd.toFixed(2)})
-        </p>
-      )}
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-500">IVA {Math.round(ivaConfig * 100)}%: {enBs ? formatearBs(ivaMostrar) : `$${ivaUsd.toFixed(2)}`}</span>
+        <span className="font-bold text-slate-800">
+          Pagar: {sinTasa ? '—' : enBs ? `${formatearBs(montoMostrar)} (≈ $${montoFinal.toFixed(2)})` : `$${montoFinal.toFixed(2)}`}
+        </span>
+      </div>
+
+      {/* Opciones fiscales (configurables en Administración → Facturación) */}
+      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+        <span className="flex items-center gap-2">
+          <input type="checkbox" checked={!enBs && igtfConfig > 0 && igtfAplica} disabled={enBs || igtfConfig <= 0} onChange={(e) => setIgtfAplica(e.target.checked)} className="h-4 w-4 accent-purple-600" />
+          Cobrar IGTF ({Math.round(igtfConfig * 100)}%){enBs && ' — no aplica en Bs.'}
+        </span>
+        <span className={igtfUsd > 0 ? 'font-medium text-purple-700' : 'text-slate-400'}>{igtfUsd > 0 ? `+ $${igtfUsd.toFixed(2)}` : '—'}</span>
+      </label>
+      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+        <span className="flex items-center gap-2">
+          <input type="checkbox" checked={retIva} onChange={(e) => setRetIva(e.target.checked)} className="h-4 w-4 accent-amber-600" />
+          Retención de IVA ({Math.round(retIvaPct * 100)}%)
+        </span>
+        <span className={retIvaUsd > 0 ? 'font-medium text-amber-700' : 'text-slate-400'}>{retIvaUsd > 0 ? `− $${retIvaUsd.toFixed(2)}` : '—'}</span>
+      </label>
+      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+        <span className="flex items-center gap-2">
+          <input type="checkbox" checked={retIslr} onChange={(e) => setRetIslr(e.target.checked)} className="h-4 w-4 accent-amber-600" />
+          Retención de ISLR ({Math.round(retIslrPct * 100)}%)
+        </span>
+        <span className={retIslrUsd > 0 ? 'font-medium text-amber-700' : 'text-slate-400'}>{retIslrUsd > 0 ? `− $${retIslrUsd.toFixed(2)}` : '—'}</span>
+      </label>
 
       {sinTasa && (
         <p className="text-xs text-red-600">Configura la tasa del día en Administración → Tasas para cobrar en Bs.</p>
@@ -394,7 +435,16 @@ function CobroCard(props: {
       )}
 
       <button
-        onClick={() => onCobrar({ metodo, moneda, descuento: desc > 0 ? desc : undefined, descuento_motivo: motivo || undefined, usar_prepago: usarPrepago || undefined })}
+        onClick={() => onCobrar({
+          metodo,
+          moneda,
+          descuento: desc > 0 ? desc : undefined,
+          descuento_motivo: motivo || undefined,
+          usar_prepago: usarPrepago || undefined,
+          igtf_aplica: !enBs && igtfConfig > 0 ? igtfAplica : undefined,
+          retencion_iva_aplica: retIva || undefined,
+          retencion_islr_aplica: retIslr || undefined,
+        })}
         disabled={loading || sinTasa}
         className="mt-2 shrink-0 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
       >
@@ -634,31 +684,296 @@ function SaldosTable({ saldos, onAbonar }: { saldos: SaldoCxc[]; onAbonar: (s: S
   )
 }
 
+interface PacienteLite {
+  id: string
+  cedula: string
+  nombre_completo: string
+}
+
+interface LineaDetalle {
+  id: string
+  examen_id: string
+  examen: string
+  precio: number
+}
+
+interface DetalleSolicitud {
+  id: string
+  estado: string
+  cobrado: boolean
+  total: number
+  lineas: LineaDetalle[]
+}
+
+interface ExamenCat {
+  id: string
+  nombre: string
+  precio: number
+  activo: boolean
+}
+
+interface FacturaRow {
+  id: string
+  serie: string
+  numero_factura: string
+  numero_control: string
+  tipo_documento: string
+  total: number
+  moneda: string
+  estatus: 'emitida' | 'anulada'
+  fecha_emision: string
+}
+
 function AbonarModal({ saldo, cargando, onClose, onConfirm }: {
   saldo: SaldoCxc
   cargando: boolean
   onClose: () => void
-  onConfirm: (d: { monto: number; moneda: string; metodo: string; observaciones?: string }) => void
+  onConfirm: (d: { monto: number; moneda: string; metodo: string; observaciones?: string } & OpcionesFiscales) => void
 }) {
-  const [monto, setMonto] = useState('')
+  const queryClient = useQueryClient()
+  const tasaUsd = useTasaUsd()
+  const ivaConfig = useConfigStore((s) => s.iva)
+  const igtfConfig = useConfigStore((s) => s.igtf)
+  const retIvaPct = useConfigStore((s) => s.retencion_iva_pct)
+  const retIslrPct = useConfigStore((s) => s.retencion_islr_pct)
+
+  // ----- Pago -----
+  const [monto, setMonto] = useState(saldo.saldo > 0 ? saldo.saldo.toFixed(2) : '')
   const [moneda, setMoneda] = useState('USD')
   const [metodo, setMetodo] = useState('efectivo')
   const [obs, setObs] = useState('')
+  const [igtfAplica, setIgtfAplica] = useState(true)
+  const [retIva, setRetIva] = useState(false)
+  const [retIslr, setRetIslr] = useState(false)
 
+  // ----- Cliente a facturar -----
+  const [cliente, setCliente] = useState<PacienteLite | null>(saldo.paciente)
+  const [editandoCliente, setEditandoCliente] = useState(false)
+  const [clienteQ, setClienteQ] = useState('')
+  const { data: pacientesEncontrados = [] } = useQuery<PacienteLite[]>({
+    queryKey: ['pacientes', 'facturar', clienteQ],
+    queryFn: async () => (await api.get('/pacientes', { params: { q: clienteQ } })).data,
+    enabled: editandoCliente,
+  })
+
+  // ----- Exámenes de la orden -----
+  const [nuevoExamenId, setNuevoExamenId] = useState('')
+  const [errorExamenes, setErrorExamenes] = useState<string | null>(null)
+  const { data: detalle } = useQuery<DetalleSolicitud>({
+    queryKey: ['solicitud', saldo.solicitud_id],
+    queryFn: async () => (await api.get(`/solicitudes/${saldo.solicitud_id}`)).data,
+  })
+  const { data: catalogo = [] } = useQuery<ExamenCat[]>({
+    queryKey: ['examenes'],
+    queryFn: async () => (await api.get('/examenes')).data,
+  })
+
+  const actualizarExamenes = useMutation({
+    mutationFn: (examenes: string[]) =>
+      api.patch(`/solicitudes/${saldo.solicitud_id}/examenes-caja`, { examenes }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['solicitud', saldo.solicitud_id] })
+      queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+      queryClient.invalidateQueries({ queryKey: ['pagos'] })
+      setErrorExamenes(null)
+    },
+    onError: (e) => setErrorExamenes(getApiError(e)),
+  })
+
+  function agregarExamen() {
+    if (!detalle || !nuevoExamenId) return
+    actualizarExamenes.mutate([...detalle.lineas.map((l) => l.examen_id), nuevoExamenId])
+    setNuevoExamenId('')
+  }
+  function quitarExamen(examenId: string) {
+    if (!detalle) return
+    const restantes = detalle.lineas.filter((l) => l.examen_id !== examenId).map((l) => l.examen_id)
+    actualizarExamenes.mutate(restantes)
+  }
+
+  // ----- Anulación de factura desde el modal -----
+  const [facturaAnular, setFacturaAnular] = useState<FacturaRow | null>(null)
+  const [motivoAnular, setMotivoAnular] = useState('')
+  const { data: facturasAsoc } = useQuery<{ facturas: FacturaRow[] }>({
+    queryKey: ['facturas', 'solicitud', saldo.solicitud_id],
+    queryFn: async () => (await api.get('/facturas', { params: { solicitud_id: saldo.solicitud_id } })).data,
+  })
+  const emitidas = (facturasAsoc?.facturas ?? []).filter((f) => f.estatus === 'emitida')
+
+  const anularDeModal = useMutation({
+    mutationFn: ({ factura_id, motivo }: { factura_id: string; motivo: string }) =>
+      api.post(`/facturas/${factura_id}/anular`, { motivo }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['facturas'] })
+      queryClient.invalidateQueries({ queryKey: ['pagos'] })
+      setFacturaAnular(null)
+      setMotivoAnular('')
+    },
+  })
+
+  // ----- Totales (misma matemática que GET /pagos/saldos) -----
+  const sumaLineas = detalle ? Number(detalle.lineas.reduce((acc, l) => acc + Number(l.precio), 0).toFixed(2)) : null
+  const baseUsd = sumaLineas ?? saldo.total_usd
+  const ivaUsd = Number((baseUsd * ivaConfig).toFixed(2))
+  const totalFacturadoUsd = Number((baseUsd + ivaUsd).toFixed(2))
+  const saldoVigenteUsd = sumaLineas == null ? saldo.saldo : Math.max(0, Number((totalFacturadoUsd - saldo.monto_pagado).toFixed(2)))
+
+  // Vista previa del recibo: el abono cubre base e IVA proporcionalmente.
   const abono = Number(monto || 0)
   const enBs = moneda === 'BS'
-  const valido = abono > 0 && abono <= saldo.saldo + 0.005
+  const ivaShare = totalFacturadoUsd > 0 ? ivaUsd / totalFacturadoUsd : 0
+  const ivaDelAbono = Number((abono * ivaShare).toFixed(2))
+  const baseDelAbono = Number((abono - ivaDelAbono).toFixed(2))
+  const igtfUsd = !enBs && igtfAplica && igtfConfig > 0 ? Number((abono * igtfConfig).toFixed(2)) : 0
+  const retIvaUsd = retIva && ivaDelAbono > 0 ? Number((ivaDelAbono * retIvaPct).toFixed(2)) : 0
+  const retIslrUsd = retIslr && baseDelAbono > 0 ? Number((baseDelAbono * retIslrPct).toFixed(2)) : 0
+  const efectivoUsd = Math.max(0, Number((abono + igtfUsd - retIvaUsd - retIslrUsd).toFixed(2)))
+  const mostrarBs = (usd: number) => formatearBs(usdABs(usd, tasaUsd) ?? 0)
+
+  const valido = abono > 0 && abono <= saldoVigenteUsd + 0.005
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-bold text-slate-800">Abonar a cuenta</h3>
+      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-bold text-slate-800">Cobro / abono a cuenta</h3>
         <p className="mt-1 text-sm text-slate-500">
-          {saldo.paciente?.nombre_completo} — saldo pendiente <strong>$ {saldo.saldo.toFixed(2)}</strong> de $ {saldo.total_usd.toFixed(2)}.
+          Saldo pendiente <strong>$ {saldoVigenteUsd.toFixed(2)}</strong> de $ {totalFacturadoUsd.toFixed(2)}
+          {saldo.parcial && <> · abonado $ {saldo.monto_pagado.toFixed(2)}</>}
+          .
         </p>
-        <div className="mt-4 space-y-3">
+
+        {/* Cliente a facturar */}
+        <div className="mt-4 rounded-lg border border-slate-200 p-3">
+          <p className="text-xs font-semibold uppercase text-slate-500">Cliente a facturar</p>
+          {cliente && !editandoCliente ? (
+            <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-medium text-slate-800">
+                {cliente.nombre_completo}
+                <span className="ml-1 text-xs text-slate-400">{cliente.cedula}</span>
+              </span>
+              <div className="flex gap-2">
+                {cliente.id !== saldo.paciente?.id && (
+                  <button onClick={() => { setCliente(saldo.paciente); }} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50">
+                    Restaurar paciente
+                  </button>
+                )}
+                <button onClick={() => setEditandoCliente(true)} className="rounded-lg border border-brand-200 px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50">
+                  Cambiar cliente
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-1.5">
+              <input value={clienteQ} onChange={(e) => setClienteQ(e.target.value)} placeholder="Buscar por cédula o nombre…" className={inputCls} autoFocus />
+              <div className="mt-1 max-h-36 overflow-y-auto rounded-lg border border-slate-200">
+                {pacientesEncontrados.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => { setCliente(p); setEditandoCliente(false); setClienteQ('') }}
+                    className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-slate-50 ${cliente?.id === p.id ? 'bg-brand-50' : ''}`}
+                  >
+                    <span className="font-medium text-slate-800">{p.nombre_completo}</span>
+                    <span className="text-xs text-slate-400">{p.cedula}</span>
+                  </button>
+                ))}
+                {editandoCliente && clienteQ.length >= 1 && pacientesEncontrados.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-slate-400">Sin coincidencias.</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Exámenes de la orden */}
+        <div className="mt-3 rounded-lg border border-slate-200 p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase text-slate-500">Exámenes de la orden</p>
+            <span className="text-xs text-slate-500">$ {baseUsd.toFixed(2)}</span>
+          </div>
+          {detalle ? (
+            <>
+              <ul className="mt-2 space-y-1">
+                {detalle.lineas.map((l) => (
+                  <li key={l.id} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate text-slate-700">{l.examen}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="text-slate-500">$ {Number(l.precio).toFixed(2)}</span>
+                      {!detalle.cobrado && (
+                        <button
+                          onClick={() => quitarExamen(l.examen_id)}
+                          disabled={actualizarExamenes.isPending}
+                          title="Quitar examen"
+                          className="rounded px-1.5 py-0.5 text-xs font-bold text-red-500 hover:bg-red-50 disabled:opacity-40"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {!detalle.cobrado && (
+                <div className="mt-2 flex gap-2">
+                  <select value={nuevoExamenId} onChange={(e) => setNuevoExamenId(e.target.value)} className={inputCls}>
+                    <option value="">Agregar examen…</option>
+                    {catalogo
+                      .filter((e) => e.activo !== false && !detalle.lineas.some((l) => l.examen_id === e.id))
+                      .map((e) => (
+                        <option key={e.id} value={e.id}>{e.nombre} ($ {Number(e.precio).toFixed(2)})</option>
+                      ))}
+                  </select>
+                  <button
+                    onClick={agregarExamen}
+                    disabled={!nuevoExamenId || actualizarExamenes.isPending}
+                    className="shrink-0 rounded-lg border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-40"
+                  >
+                    Agregar
+                  </button>
+                </div>
+              )}
+              {errorExamenes && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{errorExamenes}</p>}
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-slate-400">Cargando exámenes…</p>
+          )}
+        </div>
+
+        {/* Desglose fiscal */}
+        <div className="mt-3 space-y-1 rounded-lg bg-slate-50 p-3 text-sm">
+          <div className="flex justify-between text-slate-600"><span>Base (exámenes)</span><span>$ {baseUsd.toFixed(2)}</span></div>
+          <div className="flex justify-between text-slate-600"><span>IVA {Math.round(ivaConfig * 100)}%</span><span>$ {ivaUsd.toFixed(2)}</span></div>
+          <label className="flex items-center justify-between pt-1 text-slate-700">
+            <span className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={!enBs && igtfConfig > 0 && igtfAplica} disabled={enBs || igtfConfig <= 0} onChange={(e) => setIgtfAplica(e.target.checked)} className="h-4 w-4 accent-purple-600" />
+              Cobrar IGTF ({Math.round(igtfConfig * 100)}%){enBs && ' — no aplica en Bs.'}
+            </span>
+            <span className={igtfUsd > 0 ? 'text-purple-700' : 'text-slate-400'}>+ $ {igtfUsd.toFixed(2)}</span>
+          </label>
+          <label className="flex items-center justify-between text-slate-700">
+            <span className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={retIva} onChange={(e) => setRetIva(e.target.checked)} className="h-4 w-4 accent-amber-600" />
+              Retención de IVA ({Math.round(retIvaPct * 100)}%)
+            </span>
+            <span className={retIvaUsd > 0 ? 'text-amber-700' : 'text-slate-400'}>− $ {retIvaUsd.toFixed(2)}</span>
+          </label>
+          <label className="flex items-center justify-between text-slate-700">
+            <span className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={retIslr} onChange={(e) => setRetIslr(e.target.checked)} className="h-4 w-4 accent-amber-600" />
+              Retención de ISLR ({Math.round(retIslrPct * 100)}%)
+            </span>
+            <span className={retIslrUsd > 0 ? 'text-amber-700' : 'text-slate-400'}>− $ {retIslrUsd.toFixed(2)}</span>
+          </label>
+          <div className="flex justify-between border-t border-slate-200 pt-1.5 font-semibold text-slate-800">
+            <span>Efectivo a recibir</span>
+            <span>{enBs ? `${mostrarBs(efectivoUsd)} ≈ $ ${efectivoUsd.toFixed(2)}` : `$ ${efectivoUsd.toFixed(2)}`}</span>
+          </div>
+        </div>
+
+        {/* Datos del pago */}
+        <div className="mt-3 space-y-3">
           <Field label="Monto a abonar (USD)">
-            <input type="number" min={0} max={saldo.saldo} step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} className={inputCls} placeholder="0.00" />
+            <input type="number" min={0} max={saldoVigenteUsd} step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} className={inputCls} placeholder="0.00" />
           </Field>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Moneda">
@@ -677,15 +992,59 @@ function AbonarModal({ saldo, cargando, onClose, onConfirm }: {
             <input value={obs} onChange={(e) => setObs(e.target.value)} className={inputCls} placeholder="Opcional" />
           </Field>
         </div>
-        {!enBs && <p className="mt-2 text-xs text-slate-500">Incluye IGTF en pagos en divisas.</p>}
+
         {monto && !valido && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">El abono excede el saldo pendiente.</p>}
+
+        {/* Facturas emitidas asociadas */}
+        {emitidas.length > 0 && (
+          <div className="mt-3 rounded-lg border border-slate-200 p-3">
+            <p className="text-xs font-semibold uppercase text-slate-500">Facturas emitidas de esta solicitud</p>
+            <ul className="mt-2 space-y-1.5">
+              {emitidas.map((f) => (
+                <li key={f.id}>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-700">
+                      <strong>{f.tipo_documento === 'factura' ? 'F' : 'R'} {f.serie}-{f.numero_factura}</strong> · control {f.numero_control} · {f.moneda === 'BS' ? mostrarBs(f.total) : `$ ${Number(f.total).toFixed(2)}`}
+                    </span>
+                    <button onClick={() => { setFacturaAnular(facturaAnular?.id === f.id ? null : f); setMotivoAnular('') }} className={`font-semibold hover:underline ${facturaAnular?.id === f.id ? 'text-slate-400' : 'text-red-600'}`}>
+                      {facturaAnular?.id === f.id ? 'Cerrar' : 'Anular'}
+                    </button>
+                  </div>
+                  {facturaAnular?.id === f.id && (
+                    <div className="mt-1.5 flex gap-2">
+                      <input value={motivoAnular} onChange={(e) => setMotivoAnular(e.target.value)} placeholder="Motivo de anulación (mín. 5 caracteres)" className={inputCls} autoFocus />
+                      <button
+                        onClick={() => anularDeModal.mutate({ factura_id: f.id, motivo: motivoAnular })}
+                        disabled={anularDeModal.isPending || motivoAnular.trim().length < 5}
+                        className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-40"
+                      >
+                        {anularDeModal.isPending ? 'Anulando…' : 'Confirmar'}
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {anularDeModal.isError && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{getApiError(anularDeModal.error)}</p>}
+          </div>
+        )}
+
         <div className="mt-4 flex gap-2">
           <button
             disabled={cargando || !valido}
-            onClick={() => onConfirm({ monto: abono, moneda, metodo, observaciones: obs || undefined })}
+            onClick={() => onConfirm({
+              monto: abono,
+              moneda,
+              metodo,
+              observaciones: obs || undefined,
+              paciente_id: cliente && cliente.id !== saldo.paciente?.id ? cliente.id : undefined,
+              igtf_aplica: !enBs && igtfConfig > 0 ? igtfAplica : undefined,
+              retencion_iva_aplica: retIva || undefined,
+              retencion_islr_aplica: retIslr || undefined,
+            })}
             className="flex-1 rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50"
           >
-            {cargando ? 'Registrando…' : 'Registrar abono'}
+            {cargando ? 'Registrando…' : 'Registrar cobro'}
           </button>
           <button
             onClick={onClose}

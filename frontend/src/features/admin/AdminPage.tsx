@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import { headerTextColor, useConfigStore } from '../../lib/configStore'
 import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
@@ -273,11 +273,22 @@ function PersonalTab() {
 }
 
 // ---------- Exámenes ----------
-interface Examen { id: string; nombre: string; categoria: string | null; precio: number; activo: boolean; impuesto: string }
+interface Examen { id: string; nombre: string; categoria: string | null; precio: number; activo: boolean; impuesto: string; tipo_muestra: string | null; tubo: string | null; volumen_muestra: string | null; costo_reactivos: number; condiciones_previas: string | null; tiempo_entrega: string | null; codigo_loinc: string | null; codigo_externo: string | null }
+
+const COLORES_AREA: Record<string, string> = {
+  'Hematología': 'bg-rose-100 text-rose-700',
+  'Química': 'bg-sky-100 text-sky-700',
+  'Inmunología': 'bg-violet-100 text-violet-700',
+  'Uroanálisis': 'bg-amber-100 text-amber-700',
+  'Microbiología': 'bg-emerald-100 text-emerald-700',
+  'Coagulación': 'bg-orange-100 text-orange-700',
+}
 
 function ExamenesTab() {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
+  const [reactivosDe, setReactivosDe] = useState<Examen | null>(null)
+  const [editarDe, setEditarDe] = useState<Examen | null>(null)
   const tasaUsd = useTasaUsd()
 
   const { data: examenes = [], isLoading } = useQuery<Examen[]>({
@@ -298,17 +309,30 @@ function ExamenesTab() {
       queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
     },
   })
+  const clonar = useMutation({
+    mutationFn: (id: string) => api.post(`/admin/examenes/${id}/clonar`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['examenes'] }); setError(null) },
+    onError: (e) => setError(getApiError(e)),
+  })
 
   function handleAdd(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
-    add.mutate({ nombre: fd.get('nombre'), categoria: fd.get('categoria'), precio: Number(fd.get('precio') || 0), impuesto: fd.get('impuesto') || 'gravado' })
+    add.mutate({
+      nombre: fd.get('nombre'),
+      categoria: fd.get('categoria'),
+      precio: Number(fd.get('precio') || 0),
+      impuesto: fd.get('impuesto') || 'gravado',
+      tipo_muestra: fd.get('tipo_muestra') || null,
+      tubo: fd.get('tubo') || null,
+      volumen_muestra: fd.get('volumen_muestra') || null,
+    })
     e.currentTarget.reset()
   }
 
   return (
     <div className="space-y-4">
-      <form onSubmit={handleAdd} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-4">
+      <form onSubmit={handleAdd} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-6">
         <Field label="Nombre *"><input name="nombre" required className={inputCls} /></Field>
         <Field label="Categoría"><input name="categoria" className={inputCls} /></Field>
         <Field label="Precio (USD) *"><input name="precio" type="number" min={0} step="0.01" defaultValue={0} className={inputCls} /></Field>
@@ -319,6 +343,9 @@ function ExamenesTab() {
             <option value="no_sujeto">No sujeto</option>
           </select>
         </Field>
+        <Field label="Tipo de muestra"><input name="tipo_muestra" placeholder="sangre, orina…" className={inputCls} /></Field>
+        <Field label="Tubo"><input name="tubo" placeholder="tapa roja…" className={inputCls} /></Field>
+        <Field label="Volumen"><input name="volumen_muestra" placeholder="5 mL" className={inputCls} /></Field>
         <div className="flex items-end">
           <button type="submit" disabled={add.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Agregar</button>
         </div>
@@ -331,44 +358,283 @@ function ExamenesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                <tr><th className="px-4 py-3">Examen</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Impuesto</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
+                <tr><th className="px-4 py-3">Examen</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Impuesto</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Recolección</th><th className="px-4 py-3">Costo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {(examenes || []).map((ex) => (
-                  <tr key={ex.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-800">{ex.nombre}</td>
-                    <td className="px-4 py-3 text-slate-500">{ex.categoria ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      <select
-                        value={ex.impuesto ?? 'gravado'}
-                        onChange={(e) => update.mutate({ id: ex.id, p: { impuesto: e.target.value } })}
-                        className="rounded border border-slate-300 px-2 py-1 text-xs"
-                      >
-                        <option value="gravado">Gravado</option>
-                        <option value="exento">Exento</option>
-                        <option value="no_sujeto">No sujeto</option>
-                      </select>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <input type="number" defaultValue={ex.precio} onBlur={(e) => update.mutate({ id: ex.id, p: { precio: Number(e.target.value) } })} className="w-24 rounded border border-slate-300 px-2 py-1" />
-                        <span className="text-xs text-slate-400">{formatearBs(usdABs(ex.precio, tasaUsd))}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ex.activo ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>{ex.activo ? 'Activo' : 'Inactivo'}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => update.mutate({ id: ex.id, p: { activo: !ex.activo } })} className="text-xs font-medium text-brand-600 hover:text-brand-700">
-                        {ex.activo ? 'Desactivar' : 'Activar'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {(examenes || []).map((ex) => {
+                  const catColor = COLORES_AREA[ex.categoria ?? ''] ?? 'bg-slate-100 text-slate-600'
+                  const bajoCosto = ex.costo_reactivos > 0 && ex.precio < ex.costo_reactivos
+                  return (
+                    <tr key={ex.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium text-slate-800">{ex.nombre}</td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${catColor}`}>{ex.categoria ?? '—'}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <select
+                          value={ex.impuesto ?? 'gravado'}
+                          onChange={(e) => update.mutate({ id: ex.id, p: { impuesto: e.target.value } })}
+                          className="rounded border border-slate-300 px-2 py-1 text-xs"
+                        >
+                          <option value="gravado">Gravado</option>
+                          <option value="exento">Exento</option>
+                          <option value="no_sujeto">No sujeto</option>
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-0.5">
+                          <input type="number" defaultValue={ex.precio} onBlur={(e) => update.mutate({ id: ex.id, p: { precio: Number(e.target.value) } })} className="w-24 rounded border border-slate-300 px-2 py-1" />
+                          <span className="text-xs text-slate-400">{formatearBs(usdABs(ex.precio, tasaUsd))}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-slate-500">{ex.tubo ?? '—'}{ex.tipo_muestra ? ` · ${ex.tipo_muestra}` : ''}{ex.volumen_muestra ? ` · ${ex.volumen_muestra}` : ''}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-sm text-slate-700">${ex.costo_reactivos.toFixed(2)}</span>
+                          {bajoCosto && <span className="text-[10px] text-amber-600">Bajo costo · Sugerido: ${ex.costo_reactivos.toFixed(2)}</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ex.activo ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>{ex.activo ? 'Activo' : 'Inactivo'}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => setEditarDe(ex)} className="text-xs font-medium text-brand-600 hover:text-brand-700">Editar</button>
+                          <button onClick={() => setReactivosDe(ex)} className="text-xs font-medium text-brand-600 hover:text-brand-700">Reactivos</button>
+                          <button onClick={() => clonar.mutate(ex.id)} disabled={clonar.isPending} className="text-xs font-medium text-brand-600 hover:text-brand-700">Clonar</button>
+                          <button onClick={() => update.mutate({ id: ex.id, p: { activo: !ex.activo } })} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                            {ex.activo ? 'Desactivar' : 'Activar'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
+      </div>
+
+      {reactivosDe && <ReactivosExamenModal examen={reactivosDe} onClose={() => setReactivosDe(null)} />}
+      {editarDe && <EditarExamenModal examen={editarDe} onClose={() => setEditarDe(null)} onSaved={() => { setEditarDe(null); setError(null) }} />}
+    </div>
+  )
+}
+
+// ---------- Receta de insumos por examen ----------
+interface ReactivoDeExamen {
+  id: string
+  reactivo_id: string
+  nombre: string
+  unidad: string
+  stock: number
+  alerta_minima: number
+  cantidad: number
+  auto: boolean
+}
+interface ReactivoCatalogo { id: string; nombre: string; cantidad: number; alerta_minima: number | null; unidad: string | null }
+
+function ReactivosExamenModal({ examen, onClose }: { examen: Examen; onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+  const [items, setItems] = useState<Record<string, { cantidad: number; auto: boolean }>>({})
+
+  const { data: catalogo = [] } = useQuery<ReactivoCatalogo[]>({
+    queryKey: ['reactivos'],
+    queryFn: async () => (await api.get('/reactivos')).data,
+  })
+  const { data: receta = [], isLoading } = useQuery<ReactivoDeExamen[]>({
+    queryKey: ['examenes', 'reactivos', examen.id],
+    queryFn: async () => (await api.get(`/admin/examenes/${examen.id}/reactivos`)).data,
+  })
+
+  useEffect(() => {
+    if (isLoading) return
+    setItems(
+      Object.fromEntries(receta.map((r) => [r.reactivo_id, { cantidad: r.cantidad, auto: r.auto }])),
+    )
+  }, [receta, isLoading])
+
+  const guardar = useMutation({
+    mutationFn: (payload: unknown) => api.put(`/admin/examenes/${examen.id}/reactivos`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['examenes', 'reactivos', examen.id] })
+      setError(null)
+      onClose()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  function toggleItem(id: string) {
+    setItems((prev) => {
+      const next = { ...prev }
+      if (next[id]) delete next[id]
+      else next[id] = { cantidad: 1, auto: true }
+      return next
+    })
+  }
+  function setCantidad(id: string, cantidad: number) {
+    setItems((prev) => ({ ...prev, [id]: { ...prev[id], cantidad } }))
+  }
+  function setAuto(id: string, auto: boolean) {
+    setItems((prev) => ({ ...prev, [id]: { ...prev[id], auto } }))
+  }
+
+  function handleSave() {
+    guardar.mutate({
+      items: Object.entries(items).map(([reactivoId, v]) => ({ reactivo_id: reactivoId, cantidad: v.cantidad, auto: v.auto })),
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-800">Reactivos de «{examen.nombre}»</h3>
+            <p className="text-xs text-slate-500">Insumos que este examen consume al emitir su resultado.</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100">✕</button>
+        </div>
+
+        <div className="max-h-[55vh] overflow-y-auto p-5">
+          <Errtag>{error}</Errtag>
+          {isLoading ? (
+            <p className="text-sm text-slate-500">Cargando…</p>
+          ) : (
+            <div className="space-y-2">
+              {(catalogo.length === 0) && <p className="text-sm text-slate-500">No hay reactivos en el catálogo.</p>}
+              {catalogo.map((r) => {
+                const sel = items[r.id]
+                return (
+                  <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-3">
+                    <input type="checkbox" checked={Boolean(sel)} onChange={() => toggleItem(r.id)} className="accent-brand-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800">{r.nombre}</p>
+                      <p className="text-xs text-slate-400">stock {r.cantidad} {r.unidad ?? 'unidades'} · alerta mín. {r.alerta_minima ?? 0}</p>
+                    </div>
+                    {sel && (
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1 text-xs text-slate-600">
+                          Cant./examen
+                          <input
+                            type="number"
+                            min={0.001}
+                            step="any"
+                            value={sel.cantidad}
+                            onChange={(e) => setCantidad(r.id, Number(e.target.value))}
+                            className="w-20 rounded border border-slate-300 px-2 py-1 text-sm"
+                          />
+                          {r.unidad}
+                        </label>
+                        <label className="flex items-center gap-1 text-xs text-slate-600">
+                          <input type="checkbox" checked={sel.auto} onChange={(e) => setAuto(r.id, e.target.checked)} className="accent-brand-600" />
+                          Descuento auto
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button onClick={handleSave} disabled={guardar.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+            {guardar.isPending ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- Edición completa de un examen ----------
+function EditarExamenModal({ examen, onClose, onSaved }: { examen: Examen; onClose: () => void; onSaved: () => void }) {
+  const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+
+  const update = useMutation({
+    mutationFn: (p: unknown) => api.put(`/admin/examenes/${examen.id}`, p),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['examenes'] })
+      queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+      setError(null)
+      onSaved()
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    update.mutate({
+      nombre: fd.get('nombre'),
+      categoria: fd.get('categoria') || null,
+      precio: Number(fd.get('precio') || 0),
+      impuesto: fd.get('impuesto') || 'gravado',
+      tipo_muestra: fd.get('tipo_muestra') || null,
+      tubo: fd.get('tubo') || null,
+      volumen_muestra: fd.get('volumen_muestra') || null,
+      condiciones_previas: fd.get('condiciones_previas') || null,
+      tiempo_entrega: fd.get('tiempo_entrega') || null,
+      codigo_loinc: fd.get('codigo_loinc') || null,
+      codigo_externo: fd.get('codigo_externo') || null,
+      activo: fd.get('activo') === 'on',
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-800">Editar examen</h3>
+            <p className="text-xs text-slate-500">Modifica los datos del registro «{examen.nombre}».</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100">✕</button>
+        </div>
+
+        <form id="editar-examen-form" onSubmit={handleSubmit} className="max-h-[62vh] overflow-y-auto p-5">
+          <Errtag>{error}</Errtag>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Nombre *"><input name="nombre" required defaultValue={examen.nombre ?? ''} className={inputCls} /></Field>
+            <Field label="Categoría"><input name="categoria" defaultValue={examen.categoria ?? ''} className={inputCls} /></Field>
+            <Field label="Precio (USD) *"><input name="precio" type="number" min={0} step="0.01" defaultValue={examen.precio} className={inputCls} /></Field>
+            <Field label="Impuesto (facturación)">
+              <select name="impuesto" defaultValue={examen.impuesto ?? 'gravado'} className={inputCls}>
+                <option value="gravado">Gravado (16% IVA)</option>
+                <option value="exento">Exento de IVA</option>
+                <option value="no_sujeto">No sujeto</option>
+              </select>
+            </Field>
+            <Field label="Tipo de muestra"><input name="tipo_muestra" defaultValue={examen.tipo_muestra ?? ''} placeholder="sangre, orina…" className={inputCls} /></Field>
+            <Field label="Tubo"><input name="tubo" defaultValue={examen.tubo ?? ''} placeholder="tapa roja…" className={inputCls} /></Field>
+            <Field label="Volumen"><input name="volumen_muestra" defaultValue={examen.volumen_muestra ?? ''} placeholder="5 mL" className={inputCls} /></Field>
+            <Field label="Tiempo de entrega"><input name="tiempo_entrega" defaultValue={examen.tiempo_entrega ?? ''} placeholder="24 horas" className={inputCls} /></Field>
+            <Field label="Condiciones previas">
+              <input name="condiciones_previas" defaultValue={examen.condiciones_previas ?? ''} placeholder="Ayuno de 8 a 12 horas" className={inputCls} />
+            </Field>
+            <Field label="Código LOINC"><input name="codigo_loinc" defaultValue={examen.codigo_loinc ?? ''} placeholder="2093-3" className={inputCls} /></Field>
+            <Field label="Código externo"><input name="codigo_externo" defaultValue={examen.codigo_externo ?? ''} placeholder="COL-01" className={inputCls} /></Field>
+            <label className="flex items-center gap-2 self-end pb-1 text-sm text-slate-700">
+              <input type="checkbox" name="activo" defaultChecked={examen.activo} className="accent-brand-600" />
+              Activo
+            </label>
+          </div>
+        </form>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancelar</button>
+          <button type="submit" form="editar-examen-form" disabled={update.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+            {update.isPending ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -385,6 +651,9 @@ interface Umbral {
   normal_max: number | null
   critico_min: number | null
   critico_max: number | null
+  edad_min: number | null
+  edad_max: number | null
+  sexo: 'M' | 'F' | null
   activo: boolean
 }
 
@@ -432,6 +701,9 @@ function UmbralesTab() {
       normal_max: numero(fd.get('normal_max')),
       critico_min: numero(fd.get('critico_min')),
       critico_max: numero(fd.get('critico_max')),
+      edad_min: numero(fd.get('edad_min')),
+      edad_max: numero(fd.get('edad_max')),
+      sexo: fd.get('sexo') || null,
     })
     e.currentTarget.reset()
   }
@@ -453,14 +725,23 @@ function UmbralesTab() {
       </div>
 
       {examenId && (
-        <form onSubmit={handleAdd} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 md:grid-cols-6">
+        <form onSubmit={handleAdd} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 md:grid-cols-8">
           <Field label="Clave (json) *"><input name="parametro" required placeholder="glicemia" className={inputCls} /></Field>
           <Field label="Nombre *"><input name="nombre" required placeholder="Glicemia" className={inputCls} /></Field>
           <Field label="Unidad"><input name="unidad" placeholder="mg/dL" className={inputCls} /></Field>
           <Field label="Normal mín"><input name="normal_min" type="number" step="any" className={inputCls} /></Field>
           <Field label="Normal máx"><input name="normal_max" type="number" step="any" className={inputCls} /></Field>
           <Field label="Crítico mín / máx"><div className="flex gap-1"><input name="critico_min" type="number" step="any" className={inputCls} /><input name="critico_max" type="number" step="any" className={inputCls} /></div></Field>
-          <div className="md:col-span-6">
+          <Field label="Edad mín (años)"><input name="edad_min" type="number" min={0} className={inputCls} /></Field>
+          <Field label="Edad máx (años)"><input name="edad_max" type="number" min={0} className={inputCls} /></Field>
+          <Field label="Sexo">
+            <select name="sexo" defaultValue="" className={inputCls}>
+              <option value="">Todos</option>
+              <option value="M">Masculino</option>
+              <option value="F">Femenino</option>
+            </select>
+          </Field>
+          <div className="md:col-span-8">
             <button type="submit" disabled={add.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Agregar parámetro</button>
           </div>
         </form>
@@ -477,10 +758,14 @@ function UmbralesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                <tr><th className="px-4 py-3">Parámetro</th><th className="px-4 py-3">Unidad</th><th className="px-4 py-3">Rango normal</th><th className="px-4 py-3">Crítico</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
+                <tr><th className="px-4 py-3">Parámetro</th><th className="px-4 py-3">Unidad</th><th className="px-4 py-3">Rango normal</th><th className="px-4 py-3">Población</th><th className="px-4 py-3">Crítico</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {umbrales.map((u) => (
+                {umbrales.map((u) => {
+                  const poblacion = (u.edad_min != null || u.edad_max != null || u.sexo)
+                    ? `${u.edad_min ?? 0}–${u.edad_max ?? '∞'} años · ${u.sexo === 'M' ? 'Masculino' : u.sexo === 'F' ? 'Femenino' : 'ambos'}`
+                    : 'Todos'
+                  return (
                   <tr key={u.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-800">{u.nombre}</p>
@@ -488,6 +773,7 @@ function UmbralesTab() {
                     </td>
                     <td className="px-4 py-3 text-slate-500">{u.unidad ?? '—'}</td>
                     <td className="px-4 py-3 text-slate-600">{rango(u.normal_min, u.normal_max)}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{poblacion}</td>
                     <td className="px-4 py-3 text-slate-600">{rango(u.critico_min, u.critico_max)}</td>
                     <td className="px-4 py-3">
                       <button onClick={() => update.mutate({ id: u.id, p: { activo: !u.activo } })} className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.activo ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>
@@ -498,7 +784,8 @@ function UmbralesTab() {
                       <button onClick={() => remove.mutate(u.id)} className="text-xs font-medium text-red-600 hover:text-red-700">Eliminar</button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -912,7 +1199,7 @@ function TasasTab() {
 const PRESETS = ['#8b5cf6', '#059669', '#0ea5e9', '#ef4444', '#f59e0b', '#0f172a']
 
 function ConfigTab() {
-  const { razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, apply } = useConfigStore()
+  const { razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, retencion_iva_pct, retencion_islr_pct, apply } = useConfigStore()
   const [mensaje, setMensaje] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [logoData, setLogoData] = useState<string | null>(null)
@@ -945,6 +1232,8 @@ function ConfigTab() {
       header_color,
       iva: Number(fd.get('iva') || 0) / 100,
       igtf: Number(fd.get('igtf') || 0) / 100,
+      retencion_iva_pct: Number(fd.get('retencion_iva_pct') || 0) / 100,
+      retencion_islr_pct: Number(fd.get('retencion_islr_pct') || 0) / 100,
     })
   }
 
@@ -1069,9 +1358,10 @@ function ConfigTab() {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
-        <h2 className="text-base font-bold text-slate-800">Facturación (IVA e IGTF)</h2>
+        <h2 className="text-base font-bold text-slate-800">Facturación (IVA, IGTF y retenciones)</h2>
         <p className="text-sm text-slate-500">
-          Alícuotas usadas en el cobro y la facturación. En pagos en divisas (USD) se añade el IGTF al total a cobrar.
+          Alícuotas usadas en el cobro y la facturación. En pagos en divisas (USD) se añade el IGTF al total a cobrar
+          (opcional desde caja). Las retenciones reducen el efectivo recibido cuando el cliente es agente de retención.
         </p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <Field label="IVA (%)">
@@ -1079,6 +1369,14 @@ function ConfigTab() {
           </Field>
           <Field label="IGTF (%)">
             <input name="igtf" type="number" min={0} max={100} step="0.01" defaultValue={Math.round(igtf * 10000) / 100} className={inputCls} />
+          </Field>
+          <Field label="Retención de IVA (%)">
+            <input name="retencion_iva_pct" type="number" min={0} max={100} step="0.01" defaultValue={Math.round(retencion_iva_pct * 10000) / 100} className={inputCls} />
+            <span className="mt-1 block text-xs text-slate-400">% del IVA retenido por el comprador (Ley IVA art. 27: 75% contribuyente especial; art. 28: 100% sancionado).</span>
+          </Field>
+          <Field label="Retención de ISLR (%)">
+            <input name="retencion_islr_pct" type="number" min={0} max={100} step="0.01" defaultValue={Math.round(retencion_islr_pct * 10000) / 100} className={inputCls} />
+            <span className="mt-1 block text-xs text-slate-400">% sobre servicios pagados (Decreto 1.808 art. 8: 3% servicios en general). Ajustable ante cambios fiscales.</span>
           </Field>
         </div>
       </div>

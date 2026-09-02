@@ -8,7 +8,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound, forbidden, conflict } from '../../utils/httpError.js';
 import { notificarResultadoListo } from '../../services/notifier.js';
 import { evaluarAlertas, registrarAlertas } from '../alertas/alertas.service.js';
-import { consumirReactivo } from '../../services/reactivosService.js';
+import { consumirReactivo, consumirReactivosDeExamen } from '../../services/reactivosService.js';
 import {
   createSolicitudSchema,
   idParamSchema,
@@ -16,6 +16,7 @@ import {
   solicitudesQuery,
   updateEstadoSchema,
   updateSolicitudSchema,
+  examenesCajaSchema,
 } from './solicitudes.validators.js';
 
 const router = Router();
@@ -282,6 +283,68 @@ router.patch(
       const lineas = await detalleLineas(id);
       const total = (lineas as { precio: number }[]).reduce((acc, l) => acc + Number(l.precio), 0);
       res.json({ ...updated, total, lineas });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * PATCH /api/solicitudes/:id/examenes-caja
+ * Caja: agrega/quita exámenes de una orden antes de cobrarla (reemplaza las
+ * líneas con precios de catálogo). Solo secretaria/admin; se bloquea si la
+ * solicitud está cobrada, anulada o tiene resultados cargados.
+ */
+router.patch(
+  '/:id/examenes-caja',
+  requireRole('secretaria', 'admin', 'super_root'),
+  validate(idParamSchema, 'params'),
+  validate(examenesCajaSchema),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params as z.infer<typeof idParamSchema>;
+      const { examenes } = req.body as z.infer<typeof examenesCajaSchema>;
+
+      const { data: solicitud, error: gErr } = await getSupabase()
+        .from('solicitudes')
+        .select(SOLICITUD_COLS)
+        .eq('id', id)
+        .single();
+      if (gErr || !solicitud) return next(notFound('Solicitud no encontrada'));
+      if (solicitud.estado === 'anulada') return next(conflict('La solicitud está anulada'));
+      if (solicitud.cobrado) return next(conflict('La solicitud ya fue cobrada; anula la factura para modificarla'));
+      if (Number(solicitud.monto_pagado ?? 0) > 0) {
+        return next(conflict('La solicitud tiene abonos registrados y no puede modificarse'));
+      }
+
+      const { data: lineasActuales } = await getSupabase()
+        .from('solicitudes_detalle')
+        .select('id')
+        .eq('solicitud_id', id)
+        .not('resultado_id', 'is', null);
+      if ((lineasActuales ?? []).length) {
+        return next(conflict('La solicitud tiene resultados cargados; no se pueden modificar los exámenes'));
+      }
+
+      const catalogo = await catalogoExamenes();
+      for (const examenId of examenes) {
+        if (!catalogo.has(examenId)) return next(badRequest('Uno de los exámenes no existe'));
+      }
+
+      // Reemplaza las líneas actuales por la nueva selección.
+      const { error: delErr } = await getSupabase().from('solicitudes_detalle').delete().eq('solicitud_id', id);
+      if (delErr) return next(badRequest(delErr.message));
+
+      const lineas = examenes.map((examen_id) => ({
+        solicitud_id: id,
+        examen_id,
+        precio: catalogo.get(examen_id)!.precio,
+      }));
+      await getSupabase().from('solicitudes_detalle').insert(lineas);
+
+      const actualizadas = await detalleLineas(id);
+      const total = (actualizadas as { precio: number }[]).reduce((acc, l) => acc + Number(l.precio), 0);
+      res.json({ ...solicitud, total, lineas: actualizadas });
     } catch (err) {
       next(err);
     }
@@ -586,34 +649,53 @@ router.post(
         await getSupabase().from('solicitudes').update({ estado: 'listo' }).eq('id', id);
       }
 
-      // Consumo de reactivos por línea (opcional). FEFO: nunca se consumen
-      // lotes vencidos. No bloquea la emisión: el stock insuficiente se
-      // reporta al cliente para que ajuste la carga.
+      // Consumo de reactivos por línea. FEFO: nunca se consumen lotes vencidos.
+      // No bloquea la emisión: el stock insuficiente se reporta al cliente.
+      // Si la línea declara `reactivos[]` explícitos se usan esos; si no, se
+      // descuentan automáticamente los insumos de la receta del examen
+      // (tabla `examenes_reactivos`).
       const consumos: Array<Record<string, unknown>> = [];
       const erroresConsumo: Array<Record<string, unknown>> = [];
+      const examenPorDetalle = new Map<string, string>((lineasDB ?? []).map((l) => [l.id as string, l.examen_id as string]));
       for (const linea of lineas) {
-        if (!linea.reactivos?.length) continue;
-        for (const r of linea.reactivos) {
-          try {
-            const c = await consumirReactivo(r.reactivo_id, r.cantidad, {
-              motivo: 'Consumo por emisión de resultado',
-              usuarioId: user.id,
-              solicitudDetalleId: linea.solicitud_detalle_id,
-            });
-            consumos.push({
-              solicitud_detalle_id: linea.solicitud_detalle_id,
-              reactivo_id: r.reactivo_id,
-              consumido: c.consumido,
-              lotes: c.lotes,
-            });
-          } catch (err) {
-            erroresConsumo.push({
-              solicitud_detalle_id: linea.solicitud_detalle_id,
-              reactivo_id: r.reactivo_id,
-              error: (err as Error).message,
-            });
+        if (linea.reactivos?.length) {
+          for (const r of linea.reactivos) {
+            try {
+              const c = await consumirReactivo(r.reactivo_id, r.cantidad, {
+                motivo: 'Consumo por emisión de resultado',
+                usuarioId: user.id,
+                solicitudDetalleId: linea.solicitud_detalle_id,
+              });
+              consumos.push({
+                solicitud_detalle_id: linea.solicitud_detalle_id,
+                reactivo_id: r.reactivo_id,
+                consumido: c.consumido,
+                lotes: c.lotes,
+              });
+            } catch (err) {
+              erroresConsumo.push({
+                solicitud_detalle_id: linea.solicitud_detalle_id,
+                reactivo_id: r.reactivo_id,
+                error: (err as Error).message,
+              });
+            }
           }
+          continue;
         }
+
+        const examenId = examenPorDetalle.get(linea.solicitud_detalle_id);
+        if (!examenId) continue;
+        const auto = await consumirReactivosDeExamen(examenId, {
+          clinicaId: solicitud.clinica_id ?? null,
+          usuarioId: user.id,
+          solicitudDetalleId: linea.solicitud_detalle_id,
+        });
+        auto.consumos.forEach((c) =>
+          consumos.push({ solicitud_detalle_id: linea.solicitud_detalle_id, reactivo_id: c.reactivo_id, consumido: c.consumido, lotes: c.lotes }),
+        );
+        auto.errores.forEach((e) =>
+          erroresConsumo.push({ solicitud_detalle_id: linea.solicitud_detalle_id, reactivo_id: e.reactivo_id, error: e.error }),
+        );
       }
 
       res.status(201).json({

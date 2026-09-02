@@ -69,6 +69,7 @@ const TABLAS_EN_ORDEN: string[] = [
   'profiles',
   'pacientes',
   'examenes_laboratorio',
+  'examenes_reactivos',
   'parametros_referencia',
   'tasas_cambio',
   'consultas',

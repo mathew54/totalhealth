@@ -8,6 +8,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import { idParamSchema } from '../../utils/schemas.js';
 import { resolverNombres } from '../../services/resolverNombres.js';
+import { registrarAuditoria } from '../../services/auditoria.js';
 
 const router = Router();
 router.use(authRequired);
@@ -21,6 +22,10 @@ const parametroSchema = z.object({
   normal_max: z.coerce.number().nullable().optional(),
   critico_min: z.coerce.number().nullable().optional(),
   critico_max: z.coerce.number().nullable().optional(),
+  // Rango por edad (años) y sexo, típico de los LIS. Null = aplica a todos.
+  edad_min: z.coerce.number().int().min(0).nullable().optional(),
+  edad_max: z.coerce.number().int().min(0).nullable().optional(),
+  sexo: z.enum(['M', 'F']).nullable().optional(),
   activo: z.boolean().optional(),
 });
 
@@ -61,6 +66,7 @@ router.post('/parametros', requireRole(...ROLES_ADMIN_SUPER), validate(parametro
     const body = req.body as z.infer<typeof parametroSchema>;
     const { data, error } = await getSupabase().from('parametros_referencia').insert(body).select('*').single();
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria({ accion: 'INSERT', tabla: 'parametros_referencia', registroId: data.id, detalles: { ...body } }, req.user!.id);
     res.status(201).json(data);
   } catch (err) {
     next(err);
@@ -83,6 +89,7 @@ router.patch('/parametros/:id', requireRole(...ROLES_ADMIN_SUPER), validate(idPa
       .single();
     if (error) return next(badRequest(error.message));
     if (!data) return next(notFound('Parámetro no encontrado'));
+    void registrarAuditoria({ accion: 'UPDATE', tabla: 'parametros_referencia', registroId: id, detalles: { ...body } }, req.user!.id);
     res.json(data);
   } catch (err) {
     next(err);
@@ -98,6 +105,7 @@ router.delete('/parametros/:id', requireRole(...ROLES_ADMIN_SUPER), validate(idP
     const { id } = req.params as z.infer<typeof idParamSchema>;
     const { error } = await getSupabase().from('parametros_referencia').delete().eq('id', id);
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria({ accion: 'DELETE', tabla: 'parametros_referencia', registroId: id }, req.user!.id);
     res.json({ ok: true });
   } catch (err) {
     next(err);

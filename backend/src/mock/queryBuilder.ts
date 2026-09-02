@@ -24,6 +24,8 @@ export class QueryBuilder {
   private singleMode = false
   private insertData: Row[] | null = null
   private updateData: Row | null = null
+  private upsertData: Row[] | null = null
+  private upsertConflict: string | undefined = undefined
   private deleteMode = false
   private selected: string[] | null = null
 
@@ -39,6 +41,11 @@ export class QueryBuilder {
   }
   update(partial: Row) {
     this.updateData = partial
+    return this
+  }
+  upsert(rows: Row | Row[], opts?: { onConflict?: string }) {
+    this.upsertData = Array.isArray(rows) ? rows : [rows]
+    this.upsertConflict = opts?.onConflict
     return this
   }
   delete() {
@@ -132,6 +139,27 @@ export class QueryBuilder {
       })
       this.store.rows(this.table).push(...inserted)
       return { data: this.singleMode ? inserted[0] : inserted, error: null }
+    }
+
+    if (this.upsertData) {
+      const tabla = this.store.rows(this.table)
+      const conflictCol = this.upsertConflict ? this.upsertConflict.split(',')[0]?.trim() : null
+      const resultado: Row[] = []
+      for (const r of this.upsertData) {
+        const row = { ...r }
+        const claves = conflictCol ? row[conflictCol] : row.id
+        const existente = claves != null ? tabla.find((t) => t[conflictCol ?? 'id'] === claves) : undefined
+        if (existente) {
+          Object.assign(existente, row)
+          resultado.push(existente)
+        } else {
+          if (!row.id) row.id = crypto.randomUUID()
+          if (!row.created_at) row.created_at = new Date().toISOString()
+          tabla.push(row)
+          resultado.push(row)
+        }
+      }
+      return { data: this.singleMode ? resultado[0] : resultado, error: null }
     }
 
     if (this.updateData) {

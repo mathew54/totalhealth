@@ -447,8 +447,12 @@ describe('Fase 2: consumo automático al emitir resultados', () => {
       body: { lineas: [{ solicitud_detalle_id: detalleId, valores: { glicemia: '85 mg/dL' } }] },
     })
     expect(res.status).toBe(201)
+    // No se bloquea la emisión. Glicemia tiene receta automática de 1 tira en el
+    // seed (examenes_reactivos), así que el consumo automático aplica 1 unidad.
     expect(res.body.consumo_reactivos.aplicado).toBe(true)
-    expect(res.body.consumo_reactivos.consumos).toHaveLength(0)
+    expect(res.body.consumo_reactivos.consumos).toHaveLength(1)
+    expect(res.body.consumo_reactivos.consumos[0].reactivo_id).toBe(R_GLU)
+    expect(res.body.consumo_reactivos.consumos[0].consumido).toBe(1)
   })
 })
 

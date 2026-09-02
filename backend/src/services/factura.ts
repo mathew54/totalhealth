@@ -5,7 +5,11 @@
 
 import { getSupabase } from '../config/supabase.js';
 import type { Row } from '../mock/store.js';
-import { obtenerIgtfPorcentaje } from './configService.js';
+import {
+  obtenerIgtfPorcentaje,
+  obtenerRetencionIvaPct,
+  obtenerRetencionIslrPct,
+} from './configService.js';
 
 /** Redondeo estándar a 2 decimales para montos. */
 export function redondear(n: number): number {
@@ -13,13 +17,31 @@ export function redondear(n: number): number {
 }
 
 /**
- * IGTF (3% por defecto) solo aplica a pagos en moneda extranjera (≠ BS).
- * En Bs. el IGTF no se cobra (el aporte lo retiene el banco del pagador).
+ * IGTF (3% por defecto) solo aplica a pagos en moneda extranjera (≠ BS) y solo
+ * si el cobro lo incluye (`aplica`, controlado por checkbox en caja). En Bs. el
+ * IGTF no se cobra (el aporte lo retiene el banco del pagador).
  */
-export async function calcularIgtf(monto: number, moneda: string): Promise<number> {
-  if (moneda === 'BS') return 0;
+export async function calcularIgtf(monto: number, moneda: string, aplica = true): Promise<number> {
+  if (!aplica || moneda === 'BS') return 0;
   const pct = await obtenerIgtfPorcentaje();
   return redondear(monto * pct);
+}
+
+/**
+ * Retenciones fiscales VE sobre el documento:
+ *  - IVA: % del IVA total que retiene el comprador agente de retención
+ *    (Ley del IVA art. 27-28; configurable en Administración).
+ *  - ISLR: % sobre la base gravada de servicios (Decreto 1.808 art. 8).
+ * Reducen el efectivo recibido pero el crédito documentado permanece completo.
+ */
+export async function calcularRetenciones(
+  baseGravada: number,
+  ivaTotal: number,
+  opciones: { retencion_iva?: boolean; retencion_islr?: boolean } = {},
+): Promise<{ retencion_iva: number; retencion_islr: number }> {
+  const retencion_iva = opciones.retencion_iva ? redondear(ivaTotal * (await obtenerRetencionIvaPct())) : 0;
+  const retencion_islr = opciones.retencion_islr ? redondear(baseGravada * (await obtenerRetencionIslrPct())) : 0;
+  return { retencion_iva, retencion_islr };
 }
 
 /** Correlativo del próximo documento: máximo existente + 1, rellenado a 6 dígitos. */
@@ -61,6 +83,8 @@ export interface DatosFactura {
   iva: number;
   descuento: number;
   igtf: number;
+  retencion_iva?: number;
+  retencion_islr?: number;
   total: number;
   receptor_razon_social: string;
   receptor_rif: string | null;
@@ -95,6 +119,8 @@ export async function persistirFactura(d: DatosFactura): Promise<Row> {
       iva: d.iva,
       descuento: d.descuento,
       igtf: d.igtf,
+      retencion_iva: d.retencion_iva ?? 0,
+      retencion_islr: d.retencion_islr ?? 0,
       total: d.total,
       receptor_razon_social: d.receptor_razon_social,
       receptor_rif: d.receptor_rif,

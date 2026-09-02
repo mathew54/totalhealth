@@ -229,3 +229,162 @@ describe('Facturación VE (Fase A)', () => {
     })
   })
 })
+
+describe('Caja avanzada: IGTF opcional, retenciones VE y cliente a facturar', () => {
+  const MARIA = '20000000-0000-0000-0000-000000000002' // María García
+
+  async function crearSolicitud(token: string, examenes: string[]) {
+    const s = await api('/api/solicitudes', {
+      method: 'POST',
+      token,
+      body: { paciente_id: PACIENTE, examenes },
+    })
+    expect(s.status).toBe(201)
+    return s.body.id as string
+  }
+
+  it('igtf_aplica=false cobra en divisas sin IGTF', async () => {
+    const token = (await login(SEC)).body.access_token
+    const sid = await crearSolicitud(token, [EX_GLI])
+
+    const r = await api('/api/pagos/laboratorio', {
+      method: 'POST',
+      token,
+      body: { solicitud_id: sid, moneda: 'USD', metodo: 'efectivo', igtf_aplica: false },
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.monto).toBe(11.6)
+    expect(r.body.igtf).toBe(0)
+    expect(r.body.monto_final).toBe(11.6)
+  })
+
+  it('retenciones de IVA (75%) e ISLR (3%) reducen el efectivo recibido y quedan en la factura', async () => {
+    const token = (await login(SEC)).body.access_token
+    const sid = await crearSolicitud(token, [EX_GLI])
+
+    // $10 gravado + IVA 16% = 11.60; IGTF 3% = 0.35.
+    // Ret. IVA 75% de 1.60 = 1.20; Ret. ISLR 3% de 10 = 0.30 → final 10.45.
+    const r = await api('/api/pagos/laboratorio', {
+      method: 'POST',
+      token,
+      body: { solicitud_id: sid, moneda: 'USD', metodo: 'efectivo', retencion_iva_aplica: true, retencion_islr_aplica: true },
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.retencion_iva).toBe(1.2)
+    expect(r.body.retencion_islr).toBe(0.3)
+    expect(r.body.monto_final).toBe(10.45)
+
+    // La factura persistida refleja las retenciones.
+    const f = await api(`/api/pagos/${r.body.pago.id}/factura`, { token })
+    expect(f.status).toBe(200)
+    expect(f.body.retencion_iva).toBe(1.2)
+    expect(f.body.retencion_islr).toBe(0.3)
+  })
+
+  it('permite facturarle a un cliente distinto del paciente de la orden', async () => {
+    const token = (await login(SEC)).body.access_token
+    const sid = await crearSolicitud(token, [EX_GLI])
+
+    const r = await api('/api/pagos/laboratorio', {
+      method: 'POST',
+      token,
+      body: { solicitud_id: sid, moneda: 'USD', metodo: 'zelle', paciente_id: MARIA },
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.pago.paciente_id).toBe(MARIA)
+
+    // El documento fiscal va al cliente facturado.
+    const f = await api(`/api/facturas/${r.body.factura.id}`, { token })
+    expect(f.status).toBe(200)
+    expect(f.body.paciente_id).toBe(MARIA)
+    expect(f.body.receptor_razon_social).toBe('María García')
+  })
+
+  it('caja agrega y quita exámenes; bloqueado tras cobrar o con abonos', async () => {
+    const token = (await login(SEC)).body.access_token
+    const sid = await crearSolicitud(token, [EX_GLI])
+
+    const agregar = await api(`/api/solicitudes/${sid}/examenes-caja`, {
+      method: 'PATCH',
+      token,
+      body: { examenes: [EX_GLI, EX_HEM] },
+    })
+    expect(agregar.status).toBe(200)
+    expect(agregar.body.total).toBe(25)
+
+    const quitar = await api(`/api/solicitudes/${sid}/examenes-caja`, {
+      method: 'PATCH',
+      token,
+      body: { examenes: [EX_HEM] },
+    })
+    expect(quitar.status).toBe(200)
+    expect(quitar.body.total).toBe(15)
+
+    const cobro = await api('/api/pagos/laboratorio', {
+      method: 'POST',
+      token,
+      body: { solicitud_id: sid, moneda: 'USD', metodo: 'efectivo' },
+    })
+    expect(cobro.status).toBe(201)
+
+    const trasCobro = await api(`/api/solicitudes/${sid}/examenes-caja`, {
+      method: 'PATCH',
+      token,
+      body: { examenes: [EX_HEM, EX_GLI] },
+    })
+    expect(trasCobro.status).toBe(409)
+  })
+
+  it('abono con retención de ISLR calcula la porción base/IVA proporcional', async () => {
+    const token = (await login(SEC)).body.access_token
+    const sid = await crearSolicitud(token, [EX_GLI])
+
+    // Total facturado 11.60 (base 10 + IVA 1.60). Abono de $5:
+    // porción IVA ≈ 0.69, porción base ≈ 4.31 → ISLR 3% = 0.13; IGTF 3% = 0.15.
+    const r = await api('/api/pagos/abono', {
+      method: 'POST',
+      token,
+      body: { solicitud_id: sid, monto: 5, moneda: 'USD', metodo: 'punto', retencion_islr_aplica: true },
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.retencion_iva).toBe(0)
+    expect(r.body.retencion_islr).toBe(0.13)
+    expect(r.body.monto_final).toBe(5.02)
+  })
+
+  it('las retenciones son configurables desde Administración', async () => {
+    const tokenAdmin = (await login(ADMIN)).body.access_token
+    const c = await api('/api/admin/config', {
+      method: 'PUT',
+      token: tokenAdmin,
+      body: { retencion_iva_pct: 1, retencion_islr_pct: 0.05 },
+    })
+    expect(c.status).toBe(200)
+    expect(c.body.retencion_iva_pct).toBe(1)
+    expect(c.body.retencion_islr_pct).toBe(0.05)
+
+    const pub = await api('/api/config', { token: tokenAdmin })
+    expect(pub.body.retencion_iva_pct).toBe(1)
+    expect(pub.body.retencion_islr_pct).toBe(0.05)
+
+    // Retención de IVA al 100% sobre un cobro nuevo.
+    const tokenSec = (await login(SEC)).body.access_token
+    const sid = await crearSolicitud(tokenSec, [EX_GLI])
+    const r = await api('/api/pagos/laboratorio', {
+      method: 'POST',
+      token: tokenSec,
+      body: { solicitud_id: sid, moneda: 'USD', metodo: 'efectivo', igtf_aplica: false, retencion_iva_aplica: true },
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.igtf).toBe(0)
+    expect(r.body.retencion_iva).toBe(1.6) // 100% de 1.60
+    expect(r.body.monto_final).toBe(10)    // 11.60 - 1.60
+
+    // Restaura los porcentajes por defecto.
+    await api('/api/admin/config', {
+      method: 'PUT',
+      token: tokenAdmin,
+      body: { retencion_iva_pct: 0.75, retencion_islr_pct: 0.03 },
+    })
+  })
+})

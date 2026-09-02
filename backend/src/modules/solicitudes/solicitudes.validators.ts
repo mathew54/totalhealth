@@ -20,6 +20,11 @@ export const updateSolicitudSchema = z.object({
   examenes: z.array(z.string().uuid('Examen inválido')).min(1, 'Selecciona al menos un examen').optional(),
 });
 
+// Caja: agrega/quita exámenes de una solicitud no cobrada y sin resultados.
+export const examenesCajaSchema = z.object({
+  examenes: z.array(z.string().uuid('Examen inválido')).min(1, 'La solicitud debe conservar al menos un examen'),
+});
+
 export const resultadosSchema = z.object({
   lineas: z
     .array(

@@ -15,6 +15,7 @@ import {
   promocionSchema,
   promocionUpdateSchema,
 } from './comercial.validators.js';
+import { registrarAuditoria } from '../../services/auditoria.js';
 
 const router = Router();
 router.use(authRequired);
@@ -95,6 +96,7 @@ router.post('/paquetes', requireRole(...ROLES_ADMIN_SUPER), validate(paqueteSche
       .select('*');
     if (lErr) return next(badRequest(lErr.message));
 
+    void registrarAuditoria({ accion: 'INSERT', tabla: 'paquetes', registroId: paquete.id, detalles: { ...body } }, req.user!.id);
     res.status(201).json({ ...paquete, precio: Number(paquete.precio), examenes: await detalleConNombres(lineas) });
   } catch (err) {
     next(err);
@@ -149,6 +151,7 @@ router.put(
         lineas = await detalleConNombres(actuales);
       }
 
+      void registrarAuditoria({ accion: 'UPDATE', tabla: 'paquetes', registroId: id, detalles: { ...body } }, req.user!.id);
       res.json({ ...paquete, precio: Number(paquete.precio), examenes: lineas });
     } catch (err) {
       next(err);
@@ -171,6 +174,7 @@ router.delete(
         .select('*')
         .single();
       if (error) return next(notFound('Paquete no encontrado'));
+      void registrarAuditoria({ accion: 'DELETE', tabla: 'paquetes', registroId: id }, req.user!.id);
       res.json({ ...paquete, precio: Number(paquete.precio) });
     } catch (err) {
       next(err);
@@ -205,6 +209,7 @@ router.post('/convenios', requireRole(...ROLES_ADMIN_SUPER), validate(convenioSc
       .select('*')
       .single();
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria({ accion: 'INSERT', tabla: 'convenios', registroId: data.id, detalles: { ...body } }, req.user!.id);
     res.status(201).json({ ...data, descuento_porcentaje: Number(data.descuento_porcentaje) });
   } catch (err) {
     next(err);
@@ -233,6 +238,7 @@ router.put(
         .select('*')
         .single();
       if (error) return next(notFound('Convenio no encontrado'));
+      void registrarAuditoria({ accion: 'UPDATE', tabla: 'convenios', registroId: id, detalles: { ...body } }, req.user!.id);
       res.json({ ...data, descuento_porcentaje: Number(data.descuento_porcentaje) });
     } catch (err) {
       next(err);
@@ -255,6 +261,7 @@ router.delete(
         .select('*')
         .single();
       if (error) return next(notFound('Convenio no encontrado'));
+      void registrarAuditoria({ accion: 'DELETE', tabla: 'convenios', registroId: id }, req.user!.id);
       res.json({ ...data, descuento_porcentaje: Number(data.descuento_porcentaje) });
     } catch (err) {
       next(err);
@@ -333,6 +340,7 @@ router.post('/promociones', requireRole(...ROLES_ADMIN_SUPER), validate(promocio
       .select('*');
     if (lErr) return next(badRequest(lErr.message));
 
+    void registrarAuditoria({ accion: 'INSERT', tabla: 'promociones', registroId: promocion.id, detalles: { ...body } }, req.user!.id);
     res.status(201).json({
       ...promocion,
       descuento_porcentaje: Number(promocion.descuento_porcentaje),
@@ -397,6 +405,7 @@ router.put(
         lineas = await detalleConNombres(actuales);
       }
 
+      void registrarAuditoria({ accion: 'UPDATE', tabla: 'promociones', registroId: id, detalles: { ...body } }, req.user!.id);
       res.json({
         ...promocion,
         descuento_porcentaje: Number(promocion.descuento_porcentaje),
@@ -423,6 +432,7 @@ router.delete(
         .select('*')
         .single();
       if (error) return next(notFound('Promoción no encontrada'));
+      void registrarAuditoria({ accion: 'DELETE', tabla: 'promociones', registroId: id }, req.user!.id);
       res.json({ ...data, descuento_porcentaje: Number(data.descuento_porcentaje) });
     } catch (err) {
       next(err);

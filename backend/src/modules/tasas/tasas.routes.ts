@@ -14,6 +14,7 @@ import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound } from '../../utils/httpError.js';
 import { obtenerTasasDelDia, almacenarTasasDelDia } from '../../services/cotizaciones.js';
 import { fechaHoyCaracas } from '../../services/bcv.js';
+import { registrarAuditoria } from '../../services/auditoria.js';
 
 const MONEDAS = ['USD', 'EUR'] as const;
 const MONEDA = z.enum(MONEDAS);
@@ -147,6 +148,10 @@ adminRouter.post('/', validate(crearTasaSchema), async (req, res, next) => {
       .select(COLS)
       .single();
     if (error) return next(badRequest(error.message));
+    void registrarAuditoria(
+      { accion: 'INSERT', tabla: 'tasas_cambio', registroId: data.id as string, detalles: { fecha, moneda, valor, origen: 'manual' } },
+      req.user!.id,
+    );
     res.status(201).json(data);
   } catch (err) {
     next(err);
@@ -164,6 +169,10 @@ adminRouter.post('/scraping', async (req, res, next) => {
   try {
     const tasas = await obtenerTasasDelDia();
     const resultado = await almacenarTasasDelDia(tasas, req.user!.id, true);
+    void registrarAuditoria(
+      { accion: 'UPDATE', tabla: 'tasas_cambio', detalles: { origen: 'dolarapi', tasas: resultado } },
+      req.user!.id,
+    );
     res.json(resultado);
   } catch (err) {
     next(badRequest((err as Error).message));
@@ -184,7 +193,10 @@ adminRouter.post('/seleccionar', validate(seleccionarTasaSchema), async (req, re
     await desactivarPara(fila.fecha as string, fila.moneda as string);
     const { data, error } = await getSupabase().from('tasas_cambio').update({ activa: true }).eq('id', id).select(COLS).single();
     if (error) return next(badRequest(error.message));
-
+    void registrarAuditoria(
+      { accion: 'UPDATE', tabla: 'tasas_cambio', registroId: id, detalles: { activa: true } },
+      req.user!.id,
+    );
     res.json(data);
   } catch (err) {
     next(err);

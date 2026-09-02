@@ -13,7 +13,7 @@ router.get('/', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('examenes_laboratorio')
-      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, activo')
+      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, tipo_muestra, tubo, volumen_muestra, activo')
       .eq('activo', true)
       .order('nombre', { ascending: true });
     if (error) return next(error);

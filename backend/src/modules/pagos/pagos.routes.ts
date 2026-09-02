@@ -11,7 +11,7 @@ import { construirFactura, montoTexto, type Factura } from '../../services/invoi
 import { obtenerIvaPorcentaje } from '../../services/configService.js';
 import { conTelefonoSeparado } from '../../services/phoneNumber.js';
 import { obtenerTasaUsdActiva, obtenerTasasActivas, usdABs, bsAUsd, montoAUsd } from '../../services/moneda.js';
-import { persistirFactura, calcularIgtf, redondear } from '../../services/factura.js';
+import { persistirFactura, calcularIgtf, calcularRetenciones, redondear } from '../../services/factura.js';
 import {
   cobroLaboratorioSchema,
   pagosQuery,
@@ -27,14 +27,17 @@ const router = Router();
 router.use(authRequired, requireRole(...ROLES_SECRETARIA_ADMIN));
 
 const PAGO_COLS =
-  'id, tipo, solicitud_id, consulta_id, paciente_id, monto, moneda, tasa_usd, descuento, iva, base_gravada, base_exenta, igtf, factura_id, turno_id, metodo, secretaria_id, fecha, estado, provider, provider_ref, convenio_id, paquete_id, prepago_usado_usd';
+  'id, tipo, solicitud_id, consulta_id, paciente_id, monto, moneda, tasa_usd, descuento, iva, base_gravada, base_exenta, igtf, retencion_iva, retencion_islr, factura_id, turno_id, metodo, secretaria_id, fecha, estado, provider, provider_ref, convenio_id, paquete_id, prepago_usado_usd';
 
 /**
  * POST /api/pagos/laboratorio
  * Cobra una solicitud aplicando un descuento opcional y la pasarela de pagos.
  * Facturación VE: separa base gravada de base exenta por examen (los servicios
- * de laboratorio pueden estar exentos de IVA), calcula el IGTF en pagos en
- * divisas y persiste la factura/recibo con su correlativo.
+ * de laboratorio pueden estar exentos de IVA), calcula el IGTF opcional en
+ * divisas (checkbox de caja), aplica retenciones de IVA/ISLR configurables y
+ * persiste la factura/recibo con su correlativo.
+ * Permite facturarle a un cliente distinto al paciente de la orden (`paciente_id`)
+ * y usar el fondo de prepago del cliente facturado.
  * El pago queda en el estado que devuelva el proveedor (mock -> pagado; una
  * pasarela real podría devolver "pendiente").
  */
@@ -57,6 +60,10 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       );
     }
 
+    // Cliente a facturar: por defecto el paciente de la orden; la caja puede
+    // cambiarlo (ej. una empresa que paga los exámenes de un empleado).
+    const pacienteFacturarId = body.paciente_id ?? (solicitud.paciente_id as string);
+
     // Líneas de la solicitud (precios en USD, moneda base) y su tipo de impuesto.
     const { data: lineas } = await getSupabase()
       .from('solicitudes_detalle')
@@ -75,11 +82,12 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
     }
     const totalUsd = redondear(gravada + exenta);
 
-    const { data: paciente } = await getSupabase()
+    const { data: paciente, error: pacErr } = await getSupabase()
       .from('pacientes')
       .select('id, nombre_completo, rif, direccion_fiscal, direccion, convenio_id')
-      .eq('id', solicitud.paciente_id)
+      .eq('id', pacienteFacturarId)
       .single();
+    if (pacErr || !paciente) return next(notFound('Cliente a facturar no encontrado'));
 
     // ===== Cascada de descuentos (Fase D) =====
     // 1) Paquete (precio fijo) o promociones vigentes sobre el precio de catálogo.
@@ -188,15 +196,15 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
     const baseExenta = aMoneda(baseExentaUsd);
     const iva = aMoneda(ivaUsd);
 
-    // Prepago (Fase D): el fondo del paciente cubre parte del monto y el resto
-    // se cobra ahora. IGTF solo sobre lo cobrado en divisas.
+    // Prepago (Fase D): el fondo del cliente facturado cubre parte del monto y
+    // el resto se cobra ahora. IGTF solo sobre lo cobrado en divisas.
     let prepagoUsadoUsd = 0;
     let montoACobrar = aMoneda(montoUsd);
     if (body.usar_prepago) {
       const { data: tarjeta } = await getSupabase()
         .from('tarjetas_prepago')
         .select('id, saldo_usd')
-        .eq('paciente_id', solicitud.paciente_id)
+        .eq('paciente_id', pacienteFacturarId)
         .maybeSingle();
       if (tarjeta && Number(tarjeta.saldo_usd) > 0) {
         prepagoUsadoUsd = redondear(Math.min(Number(tarjeta.saldo_usd), montoUsd));
@@ -209,9 +217,16 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       }
     }
 
-    // IGTF: solo en pagos en divisas; el banco del pagador retiene el aporte.
-    const igtf = await calcularIgtf(montoACobrar, moneda);
-    const montoFinal = redondear(montoACobrar + igtf);
+    // IGTF: solo en divisas y opcional (checkbox de caja); en Bs. lo retiene el
+    // banco del pagador.
+    const igtf = await calcularIgtf(montoACobrar, moneda, body.igtf_aplica !== false);
+    // Retenciones fiscales VE (Ley IVA art. 27-28; Decreto 1.808): reducen el
+    // efectivo recibido; el crédito documentado permanece completo.
+    const { retencion_iva, retencion_islr } = await calcularRetenciones(baseGravada, iva, {
+      retencion_iva: body.retencion_iva_aplica === true,
+      retencion_islr: body.retencion_islr_aplica === true,
+    });
+    const montoFinal = redondear(Math.max(0, montoACobrar + igtf - retencion_iva - retencion_islr));
     // Total del documento de servicio (base + IVA completos) + IGTF de lo cobrado.
     const facturaTotal = redondear(aMoneda(montoUsd) + igtf);
 
@@ -242,7 +257,7 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       .insert({
         tipo: 'laboratorio',
         solicitud_id: body.solicitud_id,
-        paciente_id: solicitud.paciente_id,
+        paciente_id: pacienteFacturarId,
         clinica_id: solicitud.clinica_id,
         monto: montoACobrar,
         moneda,
@@ -252,6 +267,8 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
         base_gravada: baseGravada,
         base_exenta: baseExenta,
         igtf,
+        retencion_iva,
+        retencion_islr,
         turno_id: turno?.id ?? null,
         metodo: body.metodo ?? 'efectivo',
         secretaria_id: user.id,
@@ -283,7 +300,7 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       clinica_id: solicitud.clinica_id,
       pago_id: pago.id as string,
       solicitud_id: body.solicitud_id,
-      paciente_id: solicitud.paciente_id,
+      paciente_id: pacienteFacturarId,
       tipo_documento: 'recibo',
       moneda,
       tasa_usd: tasaUsd,
@@ -292,6 +309,8 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       iva,
       descuento,
       igtf,
+      retencion_iva,
+      retencion_islr,
       total: facturaTotal,
       receptor_razon_social: paciente?.nombre_completo ?? '',
       receptor_rif: paciente?.rif ?? null,
@@ -323,6 +342,8 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
       base_gravada: baseGravada,
       base_exenta: baseExenta,
       igtf,
+      retencion_iva,
+      retencion_islr,
       monto: montoACobrar,
       monto_final: montoFinal,
       monto_usd: montoUsd,
@@ -349,6 +370,8 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
  * Abono (pago parcial) sobre el saldo de una solicitud (Cuentas por cobrar).
  * Genera su propio recibo con el monto del abono y reduce `solicitudes.monto_pagado`;
  * cuando el acumulado cubre el total facturado (base + IVA) la solicitud queda cobrada.
+ * Soporta cambiar el cliente a facturar (`paciente_id`), IGTF opcional en divisas
+ * y retención de ISLR configurable (los recibos de abono no discriminan IVA).
  */
 router.post('/abono', validate(abonoSchema), async (req, res, next) => {
   try {
@@ -408,14 +431,32 @@ router.post('/abono', validate(abonoSchema), async (req, res, next) => {
       return usdABs(usd, tasaUsd) ?? 0;
     };
     const monto = aMoneda(abonoUsd);
-    const igtf = await calcularIgtf(monto, moneda);
-    const montoFinal = redondear(monto + igtf);
+    // IGTF opcional (checkbox de caja): solo en divisas.
+    const igtf = await calcularIgtf(monto, moneda, body.igtf_aplica !== false);
+    // El abono cubre base e IVA proporcionalmente al documento facturado; sobre
+    // esa porción se calculan las retenciones (el recibo sigue mostrando el
+    // monto abonado como base única, sin discriminar IVA).
+    const ivaShare = totalFacturadoUsd > 0 ? ivaUsd / totalFacturadoUsd : 0;
+    const ivaDelAbonoUsd = redondear(abonoUsd * ivaShare);
+    const baseDelAbonoUsd = redondear(abonoUsd - ivaDelAbonoUsd);
+    const { retencion_iva, retencion_islr } = await calcularRetenciones(
+      aMoneda(baseDelAbonoUsd),
+      aMoneda(ivaDelAbonoUsd),
+      {
+        retencion_iva: body.retencion_iva_aplica === true,
+        retencion_islr: body.retencion_islr_aplica === true,
+      },
+    );
+    const montoFinal = redondear(Math.max(0, monto + igtf - retencion_iva - retencion_islr));
 
-    const { data: paciente } = await getSupabase()
+    // Cliente a facturar: por defecto el paciente de la solicitud.
+    const pacienteFacturarId = body.paciente_id ?? (solicitud.paciente_id as string);
+    const { data: paciente, error: pacErr } = await getSupabase()
       .from('pacientes')
-      .select('nombre_completo, rif, direccion_fiscal, direccion')
-      .eq('id', solicitud.paciente_id)
+      .select('id, nombre_completo, rif, direccion_fiscal, direccion')
+      .eq('id', pacienteFacturarId)
       .single();
+    if (pacErr || !paciente) return next(notFound('Cliente a facturar no encontrado'));
 
     const { data: turno } = await getSupabase()
       .from('caja_turnos')
@@ -443,7 +484,7 @@ router.post('/abono', validate(abonoSchema), async (req, res, next) => {
       .insert({
         tipo: 'abono',
         solicitud_id: body.solicitud_id,
-        paciente_id: solicitud.paciente_id,
+        paciente_id: pacienteFacturarId,
         clinica_id: solicitud.clinica_id,
         monto,
         moneda,
@@ -453,6 +494,8 @@ router.post('/abono', validate(abonoSchema), async (req, res, next) => {
         base_gravada: monto,
         base_exenta: 0,
         igtf,
+        retencion_iva,
+        retencion_islr,
         turno_id: turno?.id ?? null,
         metodo: body.metodo ?? 'efectivo',
         secretaria_id: user.id,
@@ -470,7 +513,7 @@ router.post('/abono', validate(abonoSchema), async (req, res, next) => {
       clinica_id: solicitud.clinica_id,
       pago_id: pago.id as string,
       solicitud_id: body.solicitud_id,
-      paciente_id: solicitud.paciente_id,
+      paciente_id: pacienteFacturarId,
       tipo_documento: 'recibo',
       moneda,
       tasa_usd: tasaUsd,
@@ -479,6 +522,8 @@ router.post('/abono', validate(abonoSchema), async (req, res, next) => {
       iva: 0,
       descuento: 0,
       igtf,
+      retencion_iva,
+      retencion_islr,
       total: montoFinal,
       receptor_razon_social: paciente?.nombre_completo ?? '',
       receptor_rif: paciente?.rif ?? null,
@@ -510,6 +555,8 @@ router.post('/abono', validate(abonoSchema), async (req, res, next) => {
       abono_usd: abonoUsd,
       monto,
       igtf,
+      retencion_iva,
+      retencion_islr,
       monto_final: montoFinal,
       moneda,
       tasa_usd: tasaUsd,
@@ -939,6 +986,8 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
           base_exenta: baseExenta,
           igtf: Number(factura.igtf),
           descuento: Number(factura.descuento),
+          retencion_iva: Number(factura.retencion_iva ?? 0),
+          retencion_islr: Number(factura.retencion_islr ?? 0),
         };
 
         return res.json({
@@ -949,6 +998,8 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
           descuento: Number(factura.descuento),
           base_exenta: baseExenta,
           igtf: Number(factura.igtf),
+          retencion_iva: Number(factura.retencion_iva ?? 0),
+          retencion_islr: Number(factura.retencion_islr ?? 0),
           moneda,
           tasa_usd: tasaUsd,
           monto_usd: montoUsd,
@@ -1036,6 +1087,8 @@ router.get('/:id/factura', validate(pagosFacturaQuery, 'params'), async (req, re
       descuento,
       base_exenta: 0,
       igtf: 0,
+      retencion_iva: 0,
+      retencion_islr: 0,
       moneda,
       tasa_usd: tasaUsd,
       monto_usd: montoUsd,

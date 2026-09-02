@@ -59,9 +59,26 @@ export const examenSchema = z.object({
   codigo_loinc: z.string().max(30).optional().nullable(),
   codigo_externo: z.string().max(100).optional().nullable(),
   activo: z.coerce.boolean().default(true),
+  // Recolección de muestra (LIS): tubo, tipo de muestra y volumen.
+  tipo_muestra: z.string().max(100).optional().nullable(),
+  tubo: z.string().max(100).optional().nullable(),
+  volumen_muestra: z.string().max(50).optional().nullable(),
   // Facturación VE: tratamiento fiscal del examen (los servicios de laboratorio
   // pueden estar exentos de IVA según la Ley de IVA, art. 18 numeral 4).
   impuesto: z.enum(['gravado', 'exento', 'no_sujeto']).default('gravado'),
+});
+
+// Receta de insumos de un examen: qué reactivos consume y en qué cantidad.
+export const examenReactivosSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        reactivo_id: z.string().uuid('Reactivo inválido'),
+        cantidad: z.coerce.number().positive('La cantidad debe ser mayor a 0'),
+        auto: z.coerce.boolean().default(true).optional(),
+      }),
+    )
+    .max(50),
 });
 
 const origenSchema = z.enum(['mock', 'db']);
@@ -97,4 +114,7 @@ export const configSchema = z.object({
   iva: z.coerce.number().min(0).max(1).optional(),
   igtf: z.coerce.number().min(0).max(1).optional(),
   contribuyente_especial: z.coerce.boolean().optional(),
+  // Retenciones fiscales configurables (0.75 = 75% del IVA; 0.03 = 3% ISLR).
+  retencion_iva_pct: z.coerce.number().min(0).max(1).optional(),
+  retencion_islr_pct: z.coerce.number().min(0).max(1).optional(),
 });

@@ -4,6 +4,7 @@ export const facturasQuery = z.object({
   desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
   hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
   paciente_id: z.string().uuid('Paciente inválido').optional(),
+  solicitud_id: z.string().uuid('Solicitud inválida').optional(),
   estatus: z.enum(['emitida', 'anulada']).optional(),
   tipo: z.enum(['factura', 'recibo', 'nota_credito', 'nota_debito']).optional(),
 });

@@ -363,7 +363,7 @@ function ExamenesTab() {
               <tbody className="divide-y divide-slate-100">
                 {(examenes || []).map((ex) => {
                   const catColor = COLORES_AREA[ex.categoria ?? ''] ?? 'bg-slate-100 text-slate-600'
-                  const bajoCosto = ex.costo_reactivos > 0 && ex.precio < ex.costo_reactivos
+                  const bajoCosto = (ex.costo_reactivos ?? 0) > 0 && ex.precio < (ex.costo_reactivos ?? 0)
                   return (
                     <tr key={ex.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-800">{ex.nombre}</td>
@@ -392,8 +392,8 @@ function ExamenesTab() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-sm text-slate-700">${ex.costo_reactivos.toFixed(2)}</span>
-                          {bajoCosto && <span className="text-[10px] text-amber-600">Bajo costo · Sugerido: ${ex.costo_reactivos.toFixed(2)}</span>}
+                          <span className="text-sm text-slate-700">${(ex.costo_reactivos ?? 0).toFixed(2)}</span>
+                          {bajoCosto && <span className="text-[10px] text-amber-600">Bajo costo · Sugerido: ${(ex.costo_reactivos ?? 0).toFixed(2)}</span>}
                         </div>
                       </td>
                       <td className="px-4 py-3">

@@ -38,7 +38,8 @@ const alertasQuery = z.object({
 
 /**
  * GET /api/alertas/parametros?examen_id=...
- * Umbrales de referencia (filtrables por examen).
+ * Umbrales de referencia (filtrables por examen). Para la gestión admin se
+ * listan todos (activos e inactivos) para que el toggle de estado funcione.
  */
 router.get('/parametros', async (req, res, next) => {
   try {
@@ -46,7 +47,6 @@ router.get('/parametros', async (req, res, next) => {
     const q = getSupabase()
       .from('parametros_referencia')
       .select('*')
-      .eq('activo', true)
       .order('nombre', { ascending: true });
     if (examen_id) q.eq('examen_id', examen_id);
     const { data, error } = await q;
@@ -64,7 +64,13 @@ router.get('/parametros', async (req, res, next) => {
 router.post('/parametros', requireRole(...ROLES_ADMIN_SUPER), validate(parametroSchema), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof parametroSchema>;
-    const { data, error } = await getSupabase().from('parametros_referencia').insert(body).select('*').single();
+    // Activo por defecto y clinica_id del operador (la BD aplica estos defaults
+    // en producción; el mock no, por lo que se fijan explícitamente aquí).
+    const { data, error } = await getSupabase()
+      .from('parametros_referencia')
+      .insert({ ...body, activo: body.activo ?? true, clinica_id: req.user!.clinicaId })
+      .select('*')
+      .single();
     if (error) return next(badRequest(error.message));
     void registrarAuditoria({ accion: 'INSERT', tabla: 'parametros_referencia', registroId: data.id, detalles: { ...body } }, req.user!.id);
     res.status(201).json(data);

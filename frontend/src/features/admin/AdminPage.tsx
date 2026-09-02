@@ -326,27 +326,40 @@ function ExamenesTab() {
       tipo_muestra: fd.get('tipo_muestra') || null,
       tubo: fd.get('tubo') || null,
       volumen_muestra: fd.get('volumen_muestra') || null,
+      tiempo_entrega: fd.get('tiempo_entrega') || null,
+      condiciones_previas: fd.get('condiciones_previas') || null,
     })
     e.currentTarget.reset()
   }
 
   return (
     <div className="space-y-4">
-      <form onSubmit={handleAdd} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-6">
-        <Field label="Nombre *"><input name="nombre" required className={inputCls} /></Field>
-        <Field label="Categoría"><input name="categoria" className={inputCls} /></Field>
-        <Field label="Precio (USD) *"><input name="precio" type="number" min={0} step="0.01" defaultValue={0} className={inputCls} /></Field>
-        <Field label="Impuesto (facturación)">
-          <select name="impuesto" defaultValue="gravado" className={inputCls}>
-            <option value="gravado">Gravado (16% IVA)</option>
-            <option value="exento">Exento de IVA</option>
-            <option value="no_sujeto">No sujeto</option>
-          </select>
-        </Field>
-        <Field label="Tipo de muestra"><input name="tipo_muestra" placeholder="sangre, orina…" className={inputCls} /></Field>
-        <Field label="Tubo"><input name="tubo" placeholder="tapa roja…" className={inputCls} /></Field>
-        <Field label="Volumen"><input name="volumen_muestra" placeholder="5 mL" className={inputCls} /></Field>
-        <div className="flex items-end">
+      <form onSubmit={handleAdd} className="rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="grid gap-3 sm:grid-cols-4">
+          <Field label="Nombre *"><input name="nombre" required className={inputCls} /></Field>
+          <Field label="Categoría"><input name="categoria" placeholder="Hematología, Química…" className={inputCls} /></Field>
+          <Field label="Precio (USD) *"><input name="precio" type="number" min={0} step="0.01" defaultValue={0} className={inputCls} /></Field>
+          <Field label="Impuesto (facturación)">
+            <select name="impuesto" defaultValue="gravado" className={inputCls}>
+              <option value="gravado">Gravado (16% IVA)</option>
+              <option value="exento">Exento de IVA</option>
+              <option value="no_sujeto">No sujeto</option>
+            </select>
+          </Field>
+        </div>
+        <div className="mb-3 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Recolección de muestra</div>
+        <div className="grid gap-3 sm:grid-cols-4">
+          <Field label="Tipo de muestra"><input name="tipo_muestra" placeholder="sangre, orina…" className={inputCls} /></Field>
+          <Field label="Tubo"><input name="tubo" placeholder="tapa roja, lila (EDTA)…" className={inputCls} /></Field>
+          <Field label="Volumen"><input name="volumen_muestra" placeholder="5 mL" className={inputCls} /></Field>
+          <Field label="Tiempo de entrega"><input name="tiempo_entrega" placeholder="24 horas" className={inputCls} /></Field>
+        </div>
+        <div className="mt-3">
+          <Field label="Condiciones previas (ayuno, preparación)">
+            <input name="condiciones_previas" placeholder="Ej: Ayuno de 8 a 12 horas" className={inputCls} />
+          </Field>
+        </div>
+        <div className="mt-4">
           <button type="submit" disabled={add.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Agregar</button>
         </div>
       </form>
@@ -358,7 +371,7 @@ function ExamenesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                <tr><th className="px-4 py-3">Examen</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Impuesto</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Recolección</th><th className="px-4 py-3">Costo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
+                <tr><th className="px-4 py-3">Examen</th><th className="px-4 py-3">Categoría</th><th className="px-4 py-3">Impuesto</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Recolección</th><th className="px-4 py-3">Costo</th><th className="px-4 py-3"></th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {(examenes || []).map((ex) => {
@@ -387,17 +400,14 @@ function ExamenesTab() {
                           <span className="text-xs text-slate-400">{formatearBs(usdABs(ex.precio, tasaUsd))}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs text-slate-500">{ex.tubo ?? '—'}{ex.tipo_muestra ? ` · ${ex.tipo_muestra}` : ''}{ex.volumen_muestra ? ` · ${ex.volumen_muestra}` : ''}</span>
-                      </td>
+<td className="px-4 py-3">
+  <span className="text-xs text-slate-500">{[ex.tubo, ex.tipo_muestra, ex.volumen_muestra].filter(Boolean).join(' · ') || '—'}</span>
+</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-sm text-slate-700">${(ex.costo_reactivos ?? 0).toFixed(2)}</span>
                           {bajoCosto && <span className="text-[10px] text-amber-600">Bajo costo · Sugerido: ${(ex.costo_reactivos ?? 0).toFixed(2)}</span>}
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ex.activo ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}`}>{ex.activo ? 'Activo' : 'Inactivo'}</span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -585,7 +595,6 @@ function EditarExamenModal({ examen, onClose, onSaved }: { examen: Examen; onClo
       tiempo_entrega: fd.get('tiempo_entrega') || null,
       codigo_loinc: fd.get('codigo_loinc') || null,
       codigo_externo: fd.get('codigo_externo') || null,
-      activo: fd.get('activo') === 'on',
     })
   }
 
@@ -622,10 +631,6 @@ function EditarExamenModal({ examen, onClose, onSaved }: { examen: Examen; onClo
             </Field>
             <Field label="Código LOINC"><input name="codigo_loinc" defaultValue={examen.codigo_loinc ?? ''} placeholder="2093-3" className={inputCls} /></Field>
             <Field label="Código externo"><input name="codigo_externo" defaultValue={examen.codigo_externo ?? ''} placeholder="COL-01" className={inputCls} /></Field>
-            <label className="flex items-center gap-2 self-end pb-1 text-sm text-slate-700">
-              <input type="checkbox" name="activo" defaultChecked={examen.activo} className="accent-brand-600" />
-              Activo
-            </label>
           </div>
         </form>
 

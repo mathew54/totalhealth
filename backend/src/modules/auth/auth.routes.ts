@@ -31,15 +31,25 @@ router.post('/login', validate(loginSchema), async (req, res, next) => {
 
     const { data: profile } = await getSupabase()
       .from('profiles')
-      .select('id, email, role, roles, activo, mfa_activo')
+      .select('id, role, roles, nombre_completo, clinica_id, activo, mfa_activo')
       .eq('cedula', cedulaNorm)
       .maybeSingle();
 
-    if (!profile || !profile.email) {
+    if (!profile) {
       return res.status(401).json({ error: { code: 'AUTH_FAILED', message: 'Credenciales inválidas' } });
     }
     if (profile.activo === false) {
       return res.status(403).json({ error: { code: 'USER_DISABLED', message: 'Usuario desactivado' } });
+    }
+
+    // El email vive en `auth.users` (no en `profiles`). Consulta con la
+    // service_role key lo resuelve para poder autenticar contra Supabase Auth.
+    const { data: authUser } = await getSupabase()
+      .auth.admin.getUserById(profile.id);
+    const email = authUser?.user?.email || null;
+
+    if (!email) {
+      return res.status(401).json({ error: { code: 'AUTH_FAILED', message: 'Credenciales inválidas' } });
     }
 
     // Bloqueo por intentos fallidos: si la cuenta está bloqueada, se rechaza
@@ -56,8 +66,9 @@ router.post('/login', validate(loginSchema), async (req, res, next) => {
       });
     }
 
+    // Autentica contra Supabase Auth (valida email+contraseña).
     const { data, error } = await getSupabase().auth.signInWithPassword({
-      email: profile.email,
+      email,
       password,
     });
     if (error || !data.session) {
@@ -76,14 +87,45 @@ router.post('/login', validate(loginSchema), async (req, res, next) => {
     }
     await reiniciarIntentos(cedulaNorm);
 
+    // Roles efectivos: el de la fila o, si existe, el array personalizado.
+    const perfilRoles = Array.isArray(profile.roles) && profile.roles.length
+      ? (profile.roles as Rol[])
+      : [profile.role as Rol];
+    const rolActivo = profile.role as Rol;
+
     // MFA: el primer factor (contraseña) fue válido, pero falta el segundo.
     if (profile.mfa_activo === true) {
       const mfaToken = signMfaToken(profile.id);
+      // Guardamos la sesión real de Supabase para completar el login tras el TOTP.
       guardarSesionPendiente(mfaToken, data.session);
       return res.json({ mfa_required: true, mfa_token: mfaToken });
     }
 
-    res.json(data.session);
+    // Emitimos nuestro propio access token (HS256) con los claims de RBAC
+    // internos. Los tokens de acceso de Supabase Auth usan ES256 y no
+    // contienen role/roles/clinica_id/nombre, por lo que el backend firma
+    // el suyo para mantener la verificación local (HS256) y el RBAC.
+    const accessToken = signStaffToken({
+      id: profile.id,
+      role: rolActivo,
+      roles: perfilRoles,
+      clinicaId: profile.clinica_id,
+      nombre: profile.nombre_completo ?? '',
+    });
+
+    res.json({
+      access_token: accessToken,
+      token_type: 'bearer',
+      expires_in: 3600,
+      refresh_token: data.session.refresh_token ?? null,
+      user: {
+        id: profile.id,
+        email,
+        role: rolActivo,
+        roles: perfilRoles,
+        nombre: profile.nombre_completo ?? '',
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -117,11 +159,8 @@ router.post('/mfa/setup', authRequired, async (req, res, next) => {
     const user = req.user!;
     if (!esRolMfa(user.role)) return next(forbidden('MFA disponible solo para admin y super_root'));
 
-    const { data: perfil } = await getSupabase()
-      .from('profiles')
-      .select('email')
-      .eq('id', user.id)
-      .single();
+    const { data: authUser } = await getSupabase().auth.admin.getUserById(user.id);
+    const email = authUser?.user?.email ?? null;
 
     const secreto = generarSecreto();
     await getSupabase()
@@ -131,7 +170,7 @@ router.post('/mfa/setup', authRequired, async (req, res, next) => {
 
     res.json({
       secret: secreto,
-      otpauth_url: otpauthUri(secreto, perfil?.email ?? user.nombre),
+      otpauth_url: otpauthUri(secreto, email ?? user.nombre),
       activo: false,
     });
   } catch (err) {
@@ -215,7 +254,41 @@ router.post('/mfa/verify-login', validate(mfaVerifyLoginSchema), async (req, res
     if (!session) {
       return res.status(401).json({ error: { code: 'MFA_EXPIRED', message: 'Sesión vencida. Vuelve a iniciar sesión.' } });
     }
-    res.json(session);
+
+    // Reconstruye el perfil para emitir el token interno de RBAC (HS256)
+    // tras validar el segundo factor, igual que en el login sin MFA.
+    const { data: perfilCompleto } = await getSupabase()
+      .from('profiles')
+      .select('id, role, roles, nombre_completo, clinica_id')
+      .eq('id', payload.sub)
+      .single();
+    const { data: authUser } = await getSupabase().auth.admin.getUserById(payload.sub);
+    const email = authUser?.user?.email ?? null;
+
+    const perfilRoles = Array.isArray(perfilCompleto?.roles) && perfilCompleto.roles.length
+      ? (perfilCompleto.roles as Rol[])
+      : [perfilCompleto?.role as Rol];
+    const accessToken = signStaffToken({
+      id: payload.sub,
+      role: perfilCompleto?.role as Rol,
+      roles: perfilRoles,
+      clinicaId: perfilCompleto?.clinica_id ?? null,
+      nombre: perfilCompleto?.nombre_completo ?? '',
+    });
+
+    res.json({
+      access_token: accessToken,
+      token_type: 'bearer',
+      expires_in: 3600,
+      refresh_token: session.refresh_token ?? null,
+      user: {
+        id: payload.sub,
+        email,
+        role: perfilCompleto?.role as Rol,
+        roles: perfilRoles,
+        nombre: perfilCompleto?.nombre_completo ?? '',
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -257,7 +330,40 @@ router.post('/refresh', validate(refreshSchema), async (req, res, next) => {
     if (error) {
       return res.status(401).json({ error: { code: 'REFRESH_FAILED', message: 'Refresh token inválido' } });
     }
-    res.json(data.session);
+    const userId = data.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: { code: 'REFRESH_FAILED', message: 'Refresh token inválido' } });
+    }
+    const { data: perfil } = await getSupabase()
+      .from('profiles')
+      .select('id, role, roles, nombre_completo, clinica_id')
+      .eq('id', userId)
+      .single();
+    const { data: authUser } = await getSupabase().auth.admin.getUserById(userId);
+    const email = authUser?.user?.email ?? null;
+    const perfilRoles = Array.isArray(perfil?.roles) && perfil.roles.length
+      ? (perfil.roles as Rol[])
+      : [perfil?.role as Rol];
+    const accessToken = signStaffToken({
+      id: userId,
+      role: perfil?.role as Rol,
+      roles: perfilRoles,
+      clinicaId: perfil?.clinica_id ?? null,
+      nombre: perfil?.nombre_completo ?? '',
+    });
+    res.json({
+      access_token: accessToken,
+      token_type: 'bearer',
+      expires_in: 3600,
+      refresh_token: refresh_token,
+      user: {
+        id: userId,
+        email,
+        role: perfil?.role as Rol,
+        roles: perfilRoles,
+        nombre: perfil?.nombre_completo ?? '',
+      },
+    });
   } catch (err) {
     next(err);
   }

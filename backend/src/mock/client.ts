@@ -56,6 +56,16 @@ export function getMockClient() {
       },
 
       admin: {
+        async getUserById(userId: string) {
+          const user = MOCK.authUsers.find((u) => u.id === userId)
+          if (!user) return { data: { user: null }, error: { message: 'User not found' } }
+          return {
+            data: {
+              user: { id: user.id, email: user.email, aud: 'authenticated', role: 'authenticated' },
+            },
+            error: null,
+          }
+        },
         async createUser({ email, password, email_confirm }: { email: string; password: string; email_confirm?: boolean }) {
           if (MOCK.authUsers.some((u) => u.email === email)) {
             return { data: { user: null }, error: { message: 'User already registered' } }

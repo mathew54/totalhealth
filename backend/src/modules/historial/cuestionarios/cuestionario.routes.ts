@@ -349,11 +349,12 @@ router.delete('/cuestionarios/:id', requireRole(...ROLES_ADMIN_SUPER), validate(
     // Re-autenticación administrativa explícita: se valida la contraseña contra
     // el email del perfil. En mock valida contra los AUTH_USERS; en producción
     // contra Supabase Auth. Sin verificación no se ejecuta el borrado.
-    const { data: perfil } = await getSupabase().from('profiles').select('email').eq('id', user.id).maybeSingle();
-    if (!perfil?.email) return next(unauthorized('No se pudo verificar las credenciales administrativas'));
+    const { data: authUser } = await getSupabase().auth.admin.getUserById(user.id);
+    const email = authUser?.user?.email ?? null;
+    if (!email) return next(unauthorized('No se pudo verificar las credenciales administrativas'));
 
     const { data: verificado, error: authError } = await getSupabase().auth.signInWithPassword({
-      email: perfil.email as string,
+      email: email as string,
       password: body.password,
     });
     if (authError || !verificado?.session) {

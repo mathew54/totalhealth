@@ -425,7 +425,7 @@ router.get('/mis-recipes', portalAuth, async (req, res, next) => {
     const pid = req.patientId!;
     const { data: recipes } = await getSupabase()
       .from('recipes')
-      .select('id, fecha_emision, fecha_expiracion, estado')
+      .select('id, fecha_emision, fecha_expiracion, estado, firma_hash')
       .eq('paciente_id', pid)
       .eq('estado', 'activo');
     const ids = (recipes ?? []).map((r) => r.id as string);
@@ -943,6 +943,73 @@ router.get('/turnos-hoy', async (_req, res, next) => {
         inicial: String((porId.get(t.paciente_id as string) as { nombre_completo?: string } | undefined)?.nombre_completo?.charAt(0) ?? ''),
       })),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/portal/recipes/:id/verificar?hash=...
+ * Verificación pública de autenticidad de una receta digital (Punto 7).
+ * Recalcula el hash sobre id|paciente|fecha_emision y lo compara con el hash
+ * persistido. No expone datos del paciente más allá de la fecha de emisión y
+ * la lista de medicamentos (con el paciente anonimizado).
+ */
+router.get('/recipes/:id/verificar', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const hash = String(req.query.hash ?? '').toLowerCase();
+
+    const { data: receta } = await getSupabase()
+      .from('recipes')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (!receta) return next(notFound('Receta no encontrada'));
+
+    const calculado = crypto
+      .createHash('sha256')
+      .update(`${receta.id}|${receta.paciente_id}|${receta.fecha_emision}`)
+      .digest('hex');
+
+    const valido = (receta.firma_hash ?? '').toLowerCase() === hash
+      && calculado === (receta.firma_hash ?? '').toLowerCase();
+
+    if (!valido) {
+      return res.json({
+        valida: false,
+        motivo: 'La firma no coincide o el código QR fue alterado.',
+        auto: receta.firma_hash == null ? 'sin_firma' : 'no_coincide',
+        emitida: receta.fecha_emision,
+        estado: receta.estado,
+      });
+    }
+
+    const { data: lineas } = await getSupabase()
+      .from('recipes_detalle')
+      .select('medicamento, presentacion, dosis, frecuencia, indicaciones, duracion')
+      .eq('recipe_id', id)
+      .order('id', { ascending: true });
+
+    const { data: paciente } = await getSupabase()
+      .from('pacientes')
+      .select('nombre_completo')
+      .eq('id', receta.paciente_id)
+      .maybeSingle();
+
+    const vencida = receta.fecha_expiracion && new Date(receta.fecha_expiracion).getTime() < Date.now();
+
+    res.json({
+      valida: true,
+      auto: 'coincide',
+      id,
+      emitida: receta.fecha_emision,
+      expiracion: receta.fecha_expiracion ?? null,
+      vencida: Boolean(vencida),
+      estado: receta.estado,
+      paciente: paciente ? paciente.nombre_completo : null,
+      medicamentos: lineas ?? [],
+    });
   } catch (err) {
     next(err);
   }

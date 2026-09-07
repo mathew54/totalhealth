@@ -66,15 +66,46 @@ export function getMockClient() {
             error: null,
           }
         },
+        async getUserByEmail(email: string) {
+          const user = MOCK.authUsers.find((u) => u.email === email)
+          if (!user) return { data: { user: null }, error: { message: 'User not found' } }
+          return {
+            data: {
+              user: { id: user.id, email: user.email, aud: 'authenticated', role: 'authenticated' },
+            },
+            error: null,
+          }
+        },
+        async listUsers(opts?: { page?: number; perPage?: number }) {
+          const users = MOCK.authUsers.map((u) => ({
+            id: u.id,
+            email: u.email,
+            aud: 'authenticated',
+            role: 'authenticated',
+          }))
+          return { data: { users, aud: 'authenticated', total: users.length }, error: null }
+        },
         async createUser({ email, password, email_confirm }: { email: string; password: string; email_confirm?: boolean }) {
           if (MOCK.authUsers.some((u) => u.email === email)) {
-            return { data: { user: null }, error: { message: 'User already registered' } }
+            return { data: { user: null }, error: { message: 'A user with this email address has already been registered' } }
           }
           const id = crypto.randomUUID()
           MOCK.authUsers.push({ id, email, password })
           return {
             data: {
               user: { id, email, aud: 'authenticated', role: 'authenticated', email_confirmed_at: email_confirm ? new Date().toISOString() : null },
+            },
+            error: null,
+          }
+        },
+        async updateUser(userId: string, updates: { email?: string; password?: string }) {
+          const user = MOCK.authUsers.find((u) => u.id === userId)
+          if (!user) return { data: { user: null }, error: { message: 'User not found' } }
+          if (updates.email) user.email = updates.email
+          if (updates.password) user.password = updates.password
+          return {
+            data: {
+              user: { id: user.id, email: user.email, aud: 'authenticated', role: 'authenticated' },
             },
             error: null,
           }

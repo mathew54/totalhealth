@@ -51,6 +51,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Imágenes', path: '/imagenes', roles: ['medico', 'laboratorio', 'secretaria', 'admin'] },
   { label: 'Caja', path: '/pagos', roles: ['secretaria', 'admin'] },
   { label: 'Administración', path: '/admin', roles: ['admin', 'super_root'] },
+  { label: 'Inventario', path: '/inventario', roles: ['admin', 'super_root'] },
+  { label: 'Control calidad', path: '/calidad', roles: ['admin', 'super_root', 'laboratorio'] },
+  { label: 'Atención & TAT', path: '/atencion', roles: ['admin', 'super_root', 'medico', 'laboratorio'] },
   { label: 'Seguridad', path: '/seguridad', roles: ['admin', 'super_root'] },
 ];
 

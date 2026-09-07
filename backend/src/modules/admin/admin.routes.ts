@@ -84,6 +84,9 @@ async function prepararPerfilMedico(body: {
  * POST /api/admin/staff
  * Crea un usuario (médico/secretaria/bioanalista) en Supabase Auth + profile.
  * El admin asigna uno o varios roles al perfil.
+ *
+ * Si el email ya existe en auth.users (ej. es un paciente con cuenta o un
+ * staff previo), se agregan los roles al perfil existente en vez de fallar.
  */
 router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
   try {
@@ -95,6 +98,107 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
       return next(forbidden('Solo super_root puede crear administradores'));
     }
 
+    const activo = [...new Set(body.roles)];
+    const medico = await prepararPerfilMedico(body);
+
+    // Verificar si el email ya existe en Supabase Auth (listUsers + filtro)
+    const { data: usuariosAuth } = await getSupabase().auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const existingUser = (usuariosAuth?.users ?? []).find((u) => u.email?.toLowerCase() === body.email.toLowerCase());
+
+    if (existingUser) {
+      // El email ya existe — buscar si tiene profile
+      const { data: existingProfile } = await getSupabase()
+        .from('profiles')
+        .select('id, roles, role')
+        .eq('id', existingUser.id)
+        .maybeSingle();
+
+      if (existingProfile) {
+        // Tiene profile — merge de roles (unir arrays sin duplicados)
+        const rolesExistentes = Array.isArray(existingProfile.roles)
+          ? (existingProfile.roles as string[])
+          : [existingProfile.role as string];
+        const rolesFusionados = [...new Set([...rolesExistentes, ...activo])];
+
+        const updateData: Record<string, unknown> = {
+          roles: rolesFusionados,
+          role: rolesFusionados[0],
+        };
+
+        // Actualizar datos personales solo si se proporcionaron
+        if (body.nombre_completo) updateData.nombre_completo = body.nombre_completo;
+        if (body.cedula) updateData.cedula = normalizeDocumento(body.cedula);
+        if (body.telefono || body.country_code || body.local_number) {
+          updateData.telefono = encryptCampo(telefonoDesdeBody(body));
+        }
+        if (medico.especialidades.length > 0) {
+          updateData.especialidades = medico.especialidades;
+          updateData.especialidad = medico.especialidad;
+          updateData.especialidad_activa = medico.especialidad_activa;
+          if (medico.categoria_medica) updateData.categoria_medica = medico.categoria_medica;
+        }
+        if (body.colegiatura) updateData.colegiatura = body.colegiatura;
+        if (body.firma_digital) updateData.firma_digital = encryptCampo(body.firma_digital);
+
+        const { data: updated, error: updateError } = await getSupabase()
+          .from('profiles')
+          .update(updateData)
+          .eq('id', existingUser.id)
+          .select()
+          .single();
+
+        if (updateError) return next(badRequest(updateError.message));
+
+        void registrarAuditoria(
+          {
+            accion: 'UPDATE',
+            tabla: 'profiles',
+            registroId: existingUser.id,
+            detalles: { email: body.email, roles_nuevos: activo, roles_finales: rolesFusionados, merge: true },
+          },
+          user.id,
+        );
+
+        return res.json({ ...descifrarPerfil(updated), merged: true, message: 'Roles agregados al usuario existente' });
+      }
+
+      // Existe en auth pero no tiene profile — crear profile con los roles
+      const { data: profile, error: profileError } = await getSupabase()
+        .from('profiles')
+        .insert({
+          id: existingUser.id,
+          role: activo[0],
+          roles: activo,
+          clinica_id: user.clinicaId,
+          nombre_completo: body.nombre_completo,
+          cedula: body.cedula ? normalizeDocumento(body.cedula) : null,
+          telefono: encryptCampo(telefonoDesdeBody(body)),
+          especialidad: medico.especialidad,
+          especialidades: medico.especialidades,
+          especialidad_activa: medico.especialidad_activa,
+          categoria_medica: medico.categoria_medica,
+          colegiatura: body.colegiatura ?? null,
+          firma_digital: encryptCampo(body.firma_digital ?? null),
+        })
+        .select()
+        .single();
+
+      if (profileError) return next(badRequest(profileError.message));
+
+      void registrarAuditoria(
+        {
+          accion: 'INSERT',
+          tabla: 'profiles',
+          registroId: existingUser.id,
+          detalles: { email: body.email, roles: activo, nombre_completo: body.nombre_completo, auth_existed: true },
+        },
+        user.id,
+      );
+
+      return res.status(201).json({ ...descifrarPerfil(profile), merged: true, message: 'Profile creado para usuario existente' });
+    }
+
+    // Email no existe — flujo normal: crear auth user + profile
     const { data: authUser, error: authError } = await getSupabase().auth.admin.createUser({
       email: body.email,
       password: body.password,
@@ -103,15 +207,12 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
     if (authError) return next(badRequest(authError.message));
     if (!authUser?.user) return next(badRequest('No se pudo crear el usuario'));
 
-    const activo = [...new Set(body.roles)];
-    const medico = await prepararPerfilMedico(body);
     const { data: profile, error } = await getSupabase()
       .from('profiles')
       .insert({
         id: authUser.user.id,
         role: activo[0],
         roles: activo,
-        email: body.email,
         clinica_id: user.clinicaId,
         nombre_completo: body.nombre_completo,
         cedula: body.cedula ? normalizeDocumento(body.cedula) : null,

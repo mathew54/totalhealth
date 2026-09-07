@@ -6,6 +6,7 @@ import { api } from '../../lib/api'
 import { useSessionStore } from '../../stores/sessionStore'
 import StatCard from './StatCard'
 import EtiquetaQRSolicitud from './widgets/EtiquetaQRSolicitud'
+import { SeguimientoMuestras } from './widgets/SeguimientoMuestras'
 import {
   EmptyRow,
   LoadingRow,
@@ -315,6 +316,8 @@ export default function LaboratorioDashboard() {
               </div>
             </div>
           )}
+
+          <SeguimientoMuestras />
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {acciones.map((a) => (

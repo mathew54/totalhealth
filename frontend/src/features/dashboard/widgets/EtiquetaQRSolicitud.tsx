@@ -11,7 +11,8 @@ interface Solicitud {
   paciente: { nombre_completo: string } | null
 }
 
-/** Etiqueta QR pre-analítica: selecciona una solicitud y genera etiqueta imprimible. */
+/** Etiqueta QR pre-analítica: selecciona una solicitud y genera etiqueta imprimible.
+ *  Layout minimalista y elegante: detalles de la muestra a la izquierda, QR a la derecha. */
 export default function EtiquetaQRSolicitud() {
   const { data: solicitudes = [] } = useQuery<Solicitud[]>({
     queryKey: ['solicitudes', 'etiquetas'],
@@ -24,13 +25,14 @@ export default function EtiquetaQRSolicitud() {
   const [error, setError] = useState('')
 
   const solicitud = enCola.find((s) => s.id === solicitudId)
+  const codigo = solicitud ? solicitud.id.slice(0, 8).toUpperCase() : ''
 
   async function generar() {
     if (!solicitud) return
     setError('')
     try {
       const payload = `TOTALHEALTH|SOLICITUD|${solicitud.id}|${solicitud.paciente?.nombre_completo ?? 'Paciente'}`
-      const url = await generarQrDataUrl(payload)
+      const url = await generarQrDataUrl(payload, { width: 300 })
       setQr(url)
     } catch {
       setError('No se pudo generar el QR.')
@@ -39,15 +41,32 @@ export default function EtiquetaQRSolicitud() {
 
   function imprimir() {
     if (!qr || !solicitud) return
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [60, 40] })
-    const codigo = solicitud.id.slice(0, 8).toUpperCase()
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [80, 40] })
+    // Encabezado de marca
+    doc.setFillColor(31, 41, 55)
+    doc.rect(0, 0, 80, 40, 'F')
+    doc.setFillColor(139, 92, 246)
+    doc.rect(0, 0, 3, 40, 'F')
+
+    // Columna izquierda: detalles
+    doc.setTextColor(255, 255, 255)
     doc.setFontSize(8)
-    doc.text(`TotalHealth · Solicitud ${codigo}`, 5, 5)
-    doc.setFontSize(6)
-    doc.text(solicitud.paciente?.nombre_completo ?? 'Paciente', 5, 9)
-    doc.text(new Date(solicitud.fecha).toLocaleDateString('es-VE'), 5, 12)
-    doc.addImage(qr, 'PNG', 5, 14, 30, 20)
-    doc.text('Escanear para verificar', 5, 37)
+    doc.text('TotalHealth · Solicitud', 8, 7)
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.text(codigo, 8, 13)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.text(`Paciente: ${solicitud.paciente?.nombre_completo ?? 'Paciente'}`, 8, 18)
+    doc.text(`Fecha: ${new Date(solicitud.fecha).toLocaleDateString('es-VE')}`, 8, 22)
+    doc.text(`Estado: ${solicitud.estado}`, 8, 26)
+
+    // Columna derecha: QR
+    if (qr) {
+      doc.addImage(qr, 'PNG', 44, 3, 30, 30)
+      doc.setFontSize(5)
+      doc.text('Verificar autenticidad', 48, 36)
+    }
     doc.autoPrint()
     doc.save(`etiqueta-${codigo}.pdf`)
   }
@@ -74,15 +93,33 @@ export default function EtiquetaQRSolicitud() {
         >
           Generar etiqueta
         </button>
+
         {qr && (
-          <>
-            <div className="flex justify-center rounded-lg bg-white p-2">
-              <img src={qr} alt="Código QR de la solicitud" className="h-28 w-28" />
+          <div className="mt-4 overflow-hidden rounded-xl bg-slate-900 text-white shadow-md">
+            {/* Vista previa de la etiqueta: detalles izquierda + QR derecha */}
+            <div className="flex items-stretch">
+              <div className="w-1 bg-brand-500" />
+              <div className="flex-1 space-y-1 p-4">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400">TotalHealth · Solicitud</p>
+                <p className="text-xl font-bold tracking-widest text-white">{codigo}</p>
+                <div className="space-y-0.5 pt-2 text-xs text-slate-300">
+                  <p><span className="text-slate-500">Paciente:</span> {solicitud?.paciente?.nombre_completo ?? '—'}</p>
+                  <p><span className="text-slate-500">Fecha:</span> {solicitud ? new Date(solicitud.fecha).toLocaleDateString('es-VE') : '—'}</p>
+                  <p><span className="text-slate-500">Estado:</span> {solicitud?.estado ?? '—'}</p>
+                </div>
+              </div>
+              <div className="flex flex-col items-center justify-center gap-1 border-l border-white/10 p-4">
+                <img src={qr} alt="Código QR" className="h-24 w-24 bg-white p-1" />
+                <span className="text-[9px] text-slate-400">Verificar</span>
+              </div>
             </div>
-            <button onClick={imprimir} className="w-full rounded-lg border border-brand-500 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50">
-              Imprimir etiqueta PDF
-            </button>
-          </>
+          </div>
+        )}
+
+        {qr && !error && (
+          <button onClick={imprimir} className="w-full rounded-lg border border-brand-500 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50">
+            Imprimir etiqueta PDF
+          </button>
         )}
         {error && <p className="text-xs text-red-600">{error}</p>}
       </div>

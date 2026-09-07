@@ -6,7 +6,7 @@ const roleEnum = z.enum(ROLES as [string, ...string[]]);
 
 export const createStaffSchema = z.object({
   email: z.string().email('Email invalido'),
-  password: z.string().min(8, 'Minimo 8 caracteres'),
+  password: z.string().min(8, 'Minimo 8 caracteres').optional(),
   roles: z.array(roleEnum).min(1, 'Selecciona al menos un rol'),
   nombre_completo: z.string().min(3, 'Nombre requerido'),
   cedula: documentoSchema.optional(),

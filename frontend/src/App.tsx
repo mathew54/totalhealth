@@ -8,6 +8,7 @@ import UpdateBanner from './components/ui/UpdateBanner'
 const LoginPage = lazy(() => import('./features/auth/LoginPage'))
 const PortalPage = lazy(() => import('./features/portal/PortalPage'))
 const ResultadoCompartido = lazy(() => import('./features/portal/ResultadoCompartido'))
+const RecetaVerificada = lazy(() => import('./features/portal/RecetaVerificada'))
 const PantallaTurnos = lazy(() => import('./features/portal/PantallaTurnos'))
 const DashboardPage = lazy(() => import('./features/dashboard/DashboardPage'))
 const AdminPage = lazy(() => import('./features/admin/AdminPage'))
@@ -25,6 +26,9 @@ const ImagenCompartidaPage = lazy(() => import('./features/imagenes/ImagenCompar
 const HistorialPage = lazy(() => import('./features/historial/HistorialPage'))
 const ExpedientePage = lazy(() => import('./features/expediente/ExpedientePage'))
 const MocksPage = lazy(() => import('./features/mocks/MocksPage'))
+const InventarioPage = lazy(() => import('./features/inventario/InventarioPage'))
+const CalidadPage = lazy(() => import('./features/calidad/CalidadPage'))
+const AtencionPage = lazy(() => import('./features/atencion/AtencionPage'))
 
 function Protected({ children }: { children: ReactNode }) {
   const session = useSessionStore((s) => s.session)
@@ -39,6 +43,7 @@ function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/portal" element={<PortalPage />} />
       <Route path="/portal/compartido/:token" element={<ResultadoCompartido />} />
+      <Route path="/portal/receta/:id" element={<RecetaVerificada />} />
       <Route path="/portal/turnos" element={<PantallaTurnos />} />
       <Route path="/imagenes/compartir/:token" element={<ImagenCompartidaPage />} />
 
@@ -63,6 +68,9 @@ function AppRoutes() {
         <Route path="/pagos" element={<PagosPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/seguridad" element={<SeguridadPage />} />
+        <Route path="/inventario" element={<InventarioPage />} />
+        <Route path="/calidad" element={<CalidadPage />} />
+        <Route path="/atencion" element={<AtencionPage />} />
       </Route>
 
       <Route path="/mocks" element={<MocksPage />} />

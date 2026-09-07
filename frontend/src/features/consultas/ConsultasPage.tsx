@@ -28,6 +28,8 @@ interface Consulta {
   notas: string | null
   estado: string
   origen: string | null
+  url_telemedicina?: string | null
+  es_telemedicina?: boolean
   paciente?: { id: string; cedula: string; nombre_completo: string } | null
   medico?: { id: string; nombre_completo: string; especialidad: string | null; categoria_medica: string | null } | null
   turno?: TurnoAgenda | null
@@ -644,6 +646,8 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [showSolicitud, setShowSolicitud] = useState(false)
+  const [showTelemedicina, setShowTelemedicina] = useState(false)
+  const [teleUrl, setTeleUrl] = useState('')
   const [editando, setEditando] = useState(false)
   const [edFecha, setEdFecha] = useState('')
   const [edHora, setEdHora] = useState('')
@@ -700,6 +704,25 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
     },
     onError: (err) => setError(getApiError(err)),
   })
+
+  const guardarTelemedicina = useMutation({
+    mutationFn: (url: string) => api.put(`/atencion/consultas/${consultaId}/telemedicina`, { url }),
+    onSuccess: (_data, url) => {
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
+      queryClient.invalidateQueries({ queryKey: ['consulta', consultaId] })
+      setShowTelemedicina(false)
+      setError(null)
+      window.open(url, '_blank', 'noopener')
+    },
+    onError: (err) => setError(getApiError(err)),
+  })
+
+  function abrirTelemedicina() {
+    const predefinida = `https://meet.jit.si/TotalHealth-${consultaId.slice(0, 8).toUpperCase()}`
+    setTeleUrl(base?.url_telemedicina ?? predefinida)
+    setShowTelemedicina(true)
+    setError(null)
+  }
 
   function handleDiag(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -852,6 +875,37 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
                 )}
 
                 {esMedicoAutor && base.estado !== 'cancelada' && (
+                  <div className="mt-3 space-y-2">
+                    {base.url_telemedicina ? (
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                        <span className="text-sm font-medium text-emerald-700">Telemedicina activa</span>
+                        <a
+                          href={base.url_telemedicina}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                        >
+                          Abrir videollamada
+                        </a>
+                        <button
+                          onClick={abrirTelemedicina}
+                          className="rounded bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-300 hover:bg-slate-50"
+                        >
+                          Cambiar enlace
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={abrirTelemedicina}
+                        className="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                      >
+                        Iniciar telemedicina
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {esMedicoAutor && base.estado !== 'cancelada' && (
                   <button
                     onClick={() => setShowSolicitud(true)}
                     className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
@@ -916,6 +970,56 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
           pacienteId={base.paciente_id}
           onClose={() => setShowSolicitud(false)}
         />
+      )}
+
+      {showTelemedicina && base && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={() => setShowTelemedicina(false)}>
+          <div className="w-full max-w-md rounded-t-2xl bg-white p-6 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between">
+              <h3 className="text-lg font-bold text-slate-800">Telemedicina</h3>
+              <button onClick={() => setShowTelemedicina(false)} className="text-xl text-slate-400 hover:text-slate-600">×</button>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              Configura el enlace de videollamada para <strong>{base.paciente?.nombre_completo ?? 'el paciente'}</strong>.
+              Se sugiere un enlace Jitsi; también puedes usar Meet u otra sala.
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const url = teleUrl.trim()
+                if (url) guardarTelemedicina.mutate(url)
+              }}
+              className="mt-4 space-y-3"
+            >
+              <input
+                value={teleUrl}
+                onChange={(e) => setTeleUrl(e.target.value)}
+                type="url"
+                required
+                placeholder="https://meet.jit.si/…"
+                className={inputCls}
+              />
+              {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={!teleUrl.trim() || guardarTelemedicina.isPending}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {guardarTelemedicina.isPending ? 'Guardando…' : 'Guardar y abrir videollamada'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTelemedicina(false)}
+                  className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   )

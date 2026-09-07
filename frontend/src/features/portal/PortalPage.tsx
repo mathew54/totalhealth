@@ -7,6 +7,7 @@ import TasaHeader from '../../components/TasaHeader'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd } from '../../lib/moneda'
 import { portalFetch } from './portalApi'
+import { generarQrDataUrl } from '../../lib/qr'
 
 const Evolucion = lazy(() => import('./Evolucion'))
 const CompartirModal = lazy(() => import('./CompartirModal'))
@@ -29,6 +30,7 @@ interface Recipe {
   fecha_emision: string
   fecha_expiracion: string
   estado: string
+  firma_hash?: string | null
   detalle: { medicamento: string; dosis: string; frecuencia: string; indicaciones: string; duracion: string }[]
 }
 
@@ -266,6 +268,7 @@ function PortalPanel({ token, paciente }: { token: string; paciente: PortalSessi
   const { razon_social, rif, direccion, telefono, logo_url } = useConfigStore()
   const branding = { razon_social, rif, direccion, telefono, logo_url }
   const [compartir, setCompartir] = useState<{ nombre: string; url: string } | null>(null)
+  const [qrReceta, setQrReceta] = useState<{ qr: string; link: string } | null>(null)
   const [shareLoading, setShareLoading] = useState(false)
 
   async function compartirResultado(r: Resultado) {
@@ -277,6 +280,17 @@ function PortalPanel({ token, paciente }: { token: string; paciente: PortalSessi
       setError((e as Error).message)
     } finally {
       setShareLoading(false)
+    }
+  }
+
+  async function mostrarQrReceta(r: Recipe) {
+    if (!r.firma_hash) return setError('Esta receta aún no tiene firma digital.')
+    const link = `${window.location.origin}/portal/receta/${r.id}?hash=${r.firma_hash}`
+    try {
+      const qr = await generarQrDataUrl(link, { margin: 2 })
+      setQrReceta({ qr, link })
+    } catch {
+      setError('No se pudo generar el QR de la receta.')
     }
   }
 
@@ -382,7 +396,10 @@ function PortalPanel({ token, paciente }: { token: string; paciente: PortalSessi
               <div key={r.id} className="rounded-2xl border border-slate-200 bg-white p-4 print:border-0">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-slate-800">Récipes</h3>
-                  <button onClick={() => window.print()} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700">Imprimir</button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => mostrarQrReceta(r)} className="rounded-lg border border-brand-500 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50">QR de verificación</button>
+                    <button onClick={() => window.print()} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700">Imprimir</button>
+                  </div>
                 </div>
                 <p className="mt-1 text-xs text-slate-400">
                   Emitido {new Date(r.fecha_emision).toLocaleDateString()} · Vence {new Date(r.fecha_expiracion).toLocaleDateString()}
@@ -540,6 +557,18 @@ function PortalPanel({ token, paciente }: { token: string; paciente: PortalSessi
       </div>
 
       {compartir && <CompartirModal nombre={compartir.nombre} url={compartir.url} onClose={() => setCompartir(null)} />}
+
+      {qrReceta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setQrReceta(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-slate-800">QR de verificación de receta</h3>
+            <p className="mb-4 mt-1 text-xs text-slate-500">Cualquier farmacia puede escanearlo para comprobar la autenticidad del documento.</p>
+            <img src={qrReceta.qr} alt="QR de verificación de receta" className="mx-auto h-44 w-44 rounded-lg border border-slate-200 p-1" />
+            <a href={qrReceta.link} target="_blank" rel="noreferrer" className="mt-4 block break-all text-xs text-brand-700 hover:underline">{qrReceta.link}</a>
+            <button onClick={() => setQrReceta(null)} className="mt-4 w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-700">Cerrar</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

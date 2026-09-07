@@ -1,4 +1,5 @@
 import type { Row } from './store.js'
+import { createHash } from 'node:crypto'
 import { fechaHoyCaracas } from '../services/bcv.js'
 import { CATEGORIAS_MEDICAS, CHECKPOINTS_PREANALITICA, ESPECIALIDADES_MEDICAS } from '../data/catalogos.js'
 import { PAISES } from '../data/paises.js'
@@ -31,6 +32,11 @@ const future = (d: number, h = 10) => {
   t.setHours(h, 30, 0, 0)
   return t.toISOString()
 }
+
+// Firma criptográfica de una receta (espejo de la función SQL `firmar_recipe`):
+// SHA-256 de "id|paciente_id|fecha_emision" en hexadecimal.
+const firmar = (r: { id: string; paciente_id: string; fecha_emision: string }): string =>
+  createHash('sha256').update(`${r.id}|${r.paciente_id}|${r.fecha_emision}`).digest('hex')
 
 const todayISO = () => fechaHoyCaracas()
 
@@ -237,12 +243,12 @@ export const SEED: Record<string, Row[]> = {
   ],
 
   recipes: [
-    { id: '80000000-0000-0000-0000-000000000001', consulta_id: '30000000-0000-0000-0000-000000000002', paciente_id: '20000000-0000-0000-0000-000000000002', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(4), fecha_expiracion: future(26), estado: 'activo', created_at: dayAgo(4) },
-    { id: '80000000-0000-0000-0000-000000000002', consulta_id: '30000000-0000-0000-0000-000000000001', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(7), fecha_expiracion: future(23), estado: 'activo', created_at: dayAgo(7) },
+    { id: '80000000-0000-0000-0000-000000000001', consulta_id: '30000000-0000-0000-0000-000000000002', paciente_id: '20000000-0000-0000-0000-000000000002', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(4), fecha_expiracion: future(26), estado: 'activo', firma_hash: firmar({ id: '80000000-0000-0000-0000-000000000001', paciente_id: '20000000-0000-0000-0000-000000000002', fecha_emision: dayAgo(4) }), created_at: dayAgo(4) },
+    { id: '80000000-0000-0000-0000-000000000002', consulta_id: '30000000-0000-0000-0000-000000000001', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[2].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(7), fecha_expiracion: future(23), estado: 'activo', firma_hash: firmar({ id: '80000000-0000-0000-0000-000000000002', paciente_id: '20000000-0000-0000-0000-000000000001', fecha_emision: dayAgo(7) }), created_at: dayAgo(7) },
     // Receta expirada (más de 30 días de emisión).
-    { id: '80000000-0000-0000-0000-000000000003', consulta_id: '30000000-0000-0000-0000-000000000009', paciente_id: '20000000-0000-0000-0000-000000000008', medico_id: AUTH_USERS[6].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(45), fecha_expiracion: dayAgo(15), estado: 'expirado', created_at: dayAgo(45) },
+    { id: '80000000-0000-0000-0000-000000000003', consulta_id: '30000000-0000-0000-0000-000000000009', paciente_id: '20000000-0000-0000-0000-000000000008', medico_id: AUTH_USERS[6].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(45), fecha_expiracion: dayAgo(15), estado: 'expirado', firma_hash: firmar({ id: '80000000-0000-0000-0000-000000000003', paciente_id: '20000000-0000-0000-0000-000000000008', fecha_emision: dayAgo(45) }), created_at: dayAgo(45) },
     // Receta cancelada por el médico.
-    { id: '80000000-0000-0000-0000-000000000004', consulta_id: '30000000-0000-0000-0000-000000000006', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[5].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(1), fecha_expiracion: future(29), estado: 'cancelada', created_at: dayAgo(1) },
+    { id: '80000000-0000-0000-0000-000000000004', consulta_id: '30000000-0000-0000-0000-000000000006', paciente_id: '20000000-0000-0000-0000-000000000001', medico_id: AUTH_USERS[5].id, clinica_id: CLINICA_ID, fecha_emision: dayAgo(1), fecha_expiracion: future(29), estado: 'cancelada', firma_hash: firmar({ id: '80000000-0000-0000-0000-000000000004', paciente_id: '20000000-0000-0000-0000-000000000001', fecha_emision: dayAgo(1) }), created_at: dayAgo(1) },
   ],
 
   recipes_detalle: [

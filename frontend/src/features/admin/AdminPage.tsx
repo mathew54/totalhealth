@@ -88,6 +88,7 @@ const ROL_LABELS: Record<string, string> = {
 function PersonalTab() {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [rolesSel, setRolesSel] = useState<string[]>([])
   const [especSel, setEspecSel] = useState<string[]>([])
@@ -104,12 +105,16 @@ function PersonalTab() {
 
   const createStaff = useMutation({
     mutationFn: (p: unknown) => api.post('/admin/staff', p),
-    onSuccess: () => {
+    onSuccess: (response: any) => {
       queryClient.invalidateQueries({ queryKey: ['staff'] })
       setShowForm(false)
       setRolesSel([])
       setEspecSel([])
       setError(null)
+      // Si el backend indicó merge (email ya existía), mostrar info
+      if (response?.data?.merged) {
+        setSuccessMsg(response.data.message || 'Roles agregados al usuario existente')
+      }
     },
     onError: (e) => setError(getApiError(e)),
   })
@@ -128,7 +133,7 @@ function PersonalTab() {
     }
     createStaff.mutate({
       email: fd.get('email'),
-      password: fd.get('password'),
+      password: fd.get('password') || undefined,
       roles: rolesSel,
       nombre_completo: fd.get('nombre_completo'),
       cedula: fd.get('cedula'),
@@ -153,7 +158,7 @@ function PersonalTab() {
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <button onClick={() => setShowForm((v) => !v)} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+        <button onClick={() => { setShowForm((v) => !v); setError(null); setSuccessMsg(null) }} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
           {showForm ? 'Cancelar' : '+ Nuevo personal'}
         </button>
       </div>
@@ -180,7 +185,7 @@ function PersonalTab() {
             </div>
           </Field>
           <Field label="Correo"><input name="email" type="email" required className={inputCls} /></Field>
-          <Field label="Contraseña (mín. 8)"><PasswordInput name="password" required minLength={8} className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></Field>
+          <Field label="Contraseña (mín. 8, opcional si usuario existente)"><PasswordInput name="password" minLength={8} className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></Field>
           <Field label="Documento de identidad (V/E/J/P/C)"><input name="cedula" className={inputCls} placeholder="V-12345678, P-…, J-…" /></Field>
           <Field label="Teléfono"><PhoneInput name="telefono" /></Field>
           {esMedico && (
@@ -209,6 +214,7 @@ function PersonalTab() {
           )}
           <div className="sm:col-span-2">
             <Errtag>{error}</Errtag>
+            {successMsg && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{successMsg}</p>}
             <button type="submit" disabled={createStaff.isPending} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
               {createStaff.isPending ? 'Creando…' : 'Crear'}
             </button>

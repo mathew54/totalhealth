@@ -17,7 +17,7 @@ import { fechaHoyCaracas } from './bcv.js';
 export interface Notificacion {
   pacienteId: string;
   canal?: 'push' | 'whatsapp' | 'sms' | 'email';
-  tipo: 'cita' | 'resultado' | 'domicilio' | 'turno' | 'pago';
+  tipo: 'cita' | 'resultado' | 'domicilio' | 'turno' | 'pago' | 'medicamento';
   mensaje: string;
   programadaPara?: string;
   telefono?: string;
@@ -347,13 +347,99 @@ export async function notificarSalaEspera(opts: {
 }
 
 /**
+ * Recordatorio de medicamento: agenda una notificación para la hora configurada
+ * en `medicamento_recordatorios`. Con `programadaPara` se fija la próxima hora
+ * (hoy a las HH:mm). Evita duplicar por `recordatorio_id`.
+ */
+export async function agendarRecordatorioMedicamento(recordatorioId: string): Promise<boolean> {
+  const { data: rec } = await getSupabase()
+    .from('medicamento_recordatorios')
+    .select('id, recipe_detalle_id, paciente_id, hora, canal, activo')
+    .eq('id', recordatorioId)
+    .maybeSingle();
+  if (!rec || rec.activo === false) return false;
+
+  const { data: linea } = await getSupabase()
+    .from('recipes_detalle')
+    .select('recipe_id, medicamento, dosis, frecuencia')
+    .eq('id', rec.recipe_detalle_id)
+    .maybeSingle();
+  if (!linea) return false;
+
+  const { data: paciente } = await getSupabase()
+    .from('pacientes')
+    .select('nombre_completo')
+    .eq('id', rec.paciente_id)
+    .maybeSingle();
+  const nombre = (paciente?.nombre_completo as string) ?? 'Paciente';
+  const medicamento = (linea.medicamento as string) ?? 'tu medicamento';
+
+  // Próxima hora de hoy (o de mañana si ya pasó).
+  const [hh, mm] = String(rec.hora).split(':').map(Number);
+  const ahora = new Date();
+  const objetivo = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), hh, mm, 0);
+  if (objetivo.getTime() < ahora.getTime()) objetivo.setDate(objetivo.getDate() + 1);
+
+  await agendarNotificacion({
+    pacienteId: rec.paciente_id as string,
+    canal: (rec.canal as Notificacion['canal']) ?? 'push',
+    tipo: 'medicamento',
+    mensaje: `${nombre}, recuerda tomar ${medicamento}${linea.dosis ? ` (${linea.dosis})` : ''}${linea.frecuencia ? ` — ${linea.frecuencia}` : ''}.`,
+    programadaPara: objetivo.toISOString(),
+    metadata: { recordatorio_id: rec.id, recipe_detalle_id: rec.recipe_detalle_id },
+  });
+  return true;
+}
+
+/** Genera recordatorios de medicamento desde la tabla de recordatorios activos
+ * del día, evitando duplicar envíos del mismo origen. Devuelve cuántos agendó. */
+export async function generarRecordatoriosMedicamentos(): Promise<number> {
+  const { data: recordatorios } = await getSupabase()
+    .from('medicamento_recordatorios')
+    .select('id, recipe_detalle_id, paciente_id, hora, canal')
+    .eq('activo', true);
+
+  // Deduplicación: no repetir si ya existe una notificación 'medicamento' del
+  // mismo recordatorio (independientemente de la hora del día).
+  const { data: yaPolizados } = await getSupabase()
+    .from('notificaciones')
+    .select('paciente_id, tipo, metadata')
+    .eq('tipo', 'medicamento');
+  const yaEnviado = new Set(
+    (yaPolizados ?? [])
+      .map((n) => (n.metadata ?? ({} as Record<string, unknown>)).recordatorio_id as string | undefined)
+      .filter(Boolean) as string[],
+  );
+
+  // Recetas activas: solo recordar medicamentos de recetas vigentes.
+  const { data: recetasActivas } = await getSupabase()
+    .from('recipes')
+    .select('id, estado')
+    .eq('estado', 'activo');
+  const idsActivas = new Set((recetasActivas ?? []).map((r) => r.id as string));
+
+  const { data: lineas } = await getSupabase().from('recipes_detalle').select('id, recipe_id');
+  const recipeDeLinea = new Map<string, string>((lineas ?? []).map((l) => [l.id as string, l.recipe_id as string]));
+
+  let agendados = 0;
+  for (const r of recordatorios ?? []) {
+    const id = r.id as string;
+    if (yaEnviado.has(id)) continue;
+    const recetaId = recipeDeLinea.get(r.recipe_detalle_id as string);
+    if (!recetaId || !idsActivas.has(recetaId)) continue;
+    const ok = await agendarRecordatorioMedicamento(id);
+    if (ok) agendados += 1;
+  }
+  return agendados;
+}
+
+/**
  * Generación manual de recordatorios pendientes a partir del estado actual de
  * los datos (citas programadas, resultados listos, turnos del día y domicilios
  * programados). Evita duplicar si ya existe un recordatorio del mismo origen.
  * Devuelve un resumen por tipo.
  */
-export async function generarRecordatoriosManuales(): Promise<Record<string, number>> {
-  const resumen: Record<string, number> = {};
+export async function generarRecordatoriosManuales(): Promise<Record<string, number>> {  const resumen: Record<string, number> = {};
   const ahora = new Date().toISOString();
 
   const { data: existentes } = await getSupabase().from('notificaciones').select('paciente_id, tipo, metadata');
@@ -464,6 +550,9 @@ export async function generarRecordatoriosManuales(): Promise<Record<string, num
     });
     resumen.domicilios = (resumen.domicilios ?? 0) + 1;
   }
+
+  // 5) Recordatorios de medicamentos de recetas activas.
+  resumen.medicamentos = await generarRecordatoriosMedicamentos();
 
   return resumen;
 }

@@ -715,6 +715,12 @@ router.put('/config', validate(configSchema), async (req, res, next) => {
     if (body.telefono !== undefined || body.country_code !== undefined || body.local_number !== undefined) {
       update.telefono = telefonoDesdeBody(body);
     }
+    // Las columnas de texto de app_config son NOT NULL con default ''. Un campo
+    // vacío llega como null desde el cliente (o null desde telefonoDesdeBody);
+    // guardarlo tal cual rompería la restricción, así que se normaliza a ''.
+    for (const k of ['rif', 'direccion', 'telefono', 'logo_url'] as const) {
+      if (update[k] === null || update[k] === undefined) update[k] = '';
+    }
     const { data, error } = await getSupabase()
       .from('app_config')
       // Upsert en lugar de update: si la fila única (id = true) no existe aún

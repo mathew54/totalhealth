@@ -717,8 +717,10 @@ router.put('/config', validate(configSchema), async (req, res, next) => {
     }
     const { data, error } = await getSupabase()
       .from('app_config')
-      .update(update)
-      .eq('id', true)
+      // Upsert en lugar de update: si la fila única (id = true) no existe aún
+      // (p. ej. base nunca sembrada) se crea en vez de fallar con
+      // "Cannot coerce the result to a single JSON object".
+      .upsert({ id: true, ...update }, { onConflict: 'id' })
       .select('razon_social, rif, direccion, telefono, logo_url, header_color, iva, igtf, contribuyente_especial, retencion_iva_pct, retencion_islr_pct, updated_at')
       .single();
     if (error) return next(badRequest(error.message));

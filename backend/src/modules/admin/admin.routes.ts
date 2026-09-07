@@ -290,6 +290,7 @@ router.patch('/staff/:id', validate(updateStaffSchema), async (req, res, next) =
     const update: Record<string, unknown> = { ...body };
     delete update.country_code;
     delete update.local_number;
+    delete update.cedula; // cédula inmutable: no se permite editar
     if (body.roles) {
       const roles = [...new Set(body.roles)];
       update.roles = roles;

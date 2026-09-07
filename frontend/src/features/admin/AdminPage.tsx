@@ -6,7 +6,7 @@ import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
 import { WhatsAppConfig } from './WhatsAppConfig'
 import BackupsTab from './BackupsTab'
 import ComercialTab from './ComercialTab'
-import type { Profile } from '../../lib/rbac'
+import type { Profile, Rol } from '../../lib/rbac'
 import PrecioDual from '../../components/PrecioDual'
 import PhoneInput from '../../components/ui/PhoneInput'
 import { PasswordInput } from '../../components/ui/PasswordInput'
@@ -90,6 +90,7 @@ function PersonalTab() {
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [editando, setEditando] = useState<Profile | null>(null)
   const [rolesSel, setRolesSel] = useState<string[]>([])
   const [especSel, setEspecSel] = useState<string[]>([])
 
@@ -124,6 +125,27 @@ function PersonalTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff'] }),
   })
 
+  const updateStaff = useMutation({
+    mutationFn: ({ id, p }: { id: string; p: Profile }) => api.patch(`/admin/staff/${id}`, p),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['staff'] })
+      setEditando(null)
+      setRolesSel([])
+      setEspecSel([])
+      setError(null)
+      setSuccessMsg('Personal actualizado correctamente')
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  function abrirEditar(p: Profile) {
+    setEditando(p)
+    setRolesSel(p.roles?.length ? p.roles : [p.role])
+    setEspecSel(p.especialidades ?? [])
+    setError(null)
+    setSuccessMsg(null)
+  }
+
   function handleCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
@@ -144,6 +166,31 @@ function PersonalTab() {
       colegiatura: fd.get('colegiatura') || undefined,
       firma_digital: fd.get('firma_digital') || undefined,
     })
+  }
+
+  function handleEdit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!editando) return
+    if (rolesSel.length === 0) {
+      setError('Selecciona al menos un rol')
+      return
+    }
+    const fd = new FormData(e.currentTarget)
+    const rolActivo = rolesSel[0] as Rol
+    const medico: Profile = {
+      ...editando,
+      role: rolActivo,
+      roles: rolesSel as Rol[],
+      nombre_completo: String(fd.get('nombre_completo') ?? '').trim(),
+      telefono: String(fd.get('telefono') ?? '') || null,
+      especialidades: especSel,
+      especialidad: catalogo?.especialidades.find((x) => x.id === especSel[0])?.nombre ?? null,
+      especialidad_activa: especSel[0] ?? null,
+      categoria_medica: String(fd.get('categoria_medica') ?? '') || null,
+      colegiatura: String(fd.get('colegiatura') ?? '') || null,
+      firma_digital: String(fd.get('firma_digital') ?? '') || null,
+    }
+    updateStaff.mutate({ id: editando.id, p: { ...medico, cedula: undefined } })
   }
 
   function toggleRol(r: string) {
@@ -222,6 +269,80 @@ function PersonalTab() {
         </form>
       )}
 
+      {editando && (
+        <form key={editando.id} onSubmit={handleEdit} className="grid gap-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <h3 className="text-sm font-bold text-slate-800">
+              Editar personal: <span className="text-brand-700">{editando.nombre_completo}</span>
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              La cédula ({editando.cedula ?? '—'}) se muestra aquí pero no se puede modificar.
+            </p>
+          </div>
+          <Field label="Nombre completo *">
+            <input name="nombre_completo" required minLength={3} defaultValue={editando.nombre_completo} className={inputCls} />
+          </Field>
+          <Field label="Documento de identidad (no editable)">
+            <input value={editando.cedula ?? '—'} disabled className={`${inputCls} bg-slate-100 text-slate-400`} />
+          </Field>
+          <Field label="Roles (uno o varios) *">
+            <div className="flex flex-wrap gap-2">
+              {['medico', 'laboratorio', 'secretaria'].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => toggleRol(r)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-sm ${
+                    rolesSel.includes(r)
+                      ? 'border-indigo-500 bg-indigo-100 font-medium text-indigo-700'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-brand-400'
+                  }`}
+                >
+                  {ROL_LABELS[r]}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Teléfono"><PhoneInput name="telefono" defaultValue={editando.telefono} /></Field>
+          {esMedico && (
+            <>
+              <div className="sm:col-span-2">
+                <Field label={`Especialidades del catálogo (${especSel.length} seleccionadas) — la primera será la activa`}>
+                  <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-2">
+                    {(catalogo?.especialidades ?? []).map((esp) => (
+                      <label key={esp.id} className="flex items-center gap-1.5 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={especSel.includes(esp.id)}
+                          onChange={() => toggleEspec(esp.id)}
+                          className="accent-brand-600"
+                        />
+                        {esp.nombre}
+                        <span className="text-[10px] uppercase text-slate-400">{esp.categoria ?? ''}</span>
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+              <Field label="Colegiatura / Licencia"><input name="colegiatura" defaultValue={editando.colegiatura ?? ''} className={inputCls} placeholder="Ej. MPPS 12345" /></Field>
+              <Field label="Firma / sello digital (hash o imagen)"><input name="firma_digital" defaultValue={editando.firma_digital ?? ''} className={inputCls} placeholder="sha256:… o URL de sello" /></Field>
+            </>
+          )}
+          <div className="sm:col-span-2">
+            <Errtag>{error}</Errtag>
+            {successMsg && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{successMsg}</p>}
+            <div className="mt-3 flex gap-2">
+              <button type="submit" disabled={updateStaff.isPending} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                {updateStaff.isPending ? 'Guardando…' : 'Guardar cambios'}
+              </button>
+              <button type="button" onClick={() => { setEditando(null); setRolesSel([]); setEspecSel([]); setError(null); setSuccessMsg(null) }} className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-300 hover:bg-slate-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         {isLoading ? <p className="p-6 text-sm text-slate-500">Cargando…</p> : (
           <div className="overflow-x-auto">
@@ -263,9 +384,12 @@ function PersonalTab() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <button onClick={() => toggleActivo.mutate({ id: p.id, activo: !p.activo })} className="text-xs font-medium text-brand-600 hover:text-brand-700">
-                        {p.activo ? 'Desactivar' : 'Activar'}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button onClick={() => abrirEditar(p)} className="text-xs font-medium text-brand-600 hover:text-brand-700">Editar</button>
+                        <button onClick={() => toggleActivo.mutate({ id: p.id, activo: !p.activo })} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                          {p.activo ? 'Desactivar' : 'Activar'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -21,13 +21,15 @@ export const createStaffSchema = z.object({
   firma_digital: z.string().max(2000).optional(),
 });
 
+// La cédula no se puede editar: se define al crear el personal y es inmutable
+// (identifica legalmente a la persona/su cuenta). Para actualizar queda fuera
+// del schema; zod elimina las claves desconocidas en el parseo.
 export const updateStaffSchema = z.object({
   nombre_completo: z.string().min(3).optional(),
   roles: z.array(roleEnum).min(1).optional(),
   telefono: z.string().optional(),
   country_code: z.string().max(6).optional(),
   local_number: z.string().max(20).optional(),
-  cedula: documentoSchema.optional(),
   activo: z.boolean().optional(),
   especialidad: z.string().max(100).optional(),
   especialidades: z.array(z.string().max(100)).max(10).optional(),

@@ -420,11 +420,11 @@ router.get('/reporteria', validate(reporteriaQuerySchema, 'query'), async (req, 
  */
 router.get('/examenes', async (req, res, next) => {
   try {
-    const { data, error } = await getSupabase()
+    let query = getSupabase()
       .from('examenes_laboratorio')
-      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, codigo_loinc, codigo_externo, fecha_mapeo, impuesto, tipo_muestra, tubo, volumen_muestra, activo')
-      .eq('clinica_id', req.user!.clinicaId)
-      .order('nombre', { ascending: true });
+      .select('id, nombre, categoria, precio, interno, duracion_min, condiciones_previas, tiempo_entrega, codigo_loinc, codigo_externo, fecha_mapeo, impuesto, tipo_muestra, tubo, volumen_muestra, activo');
+    if (req.user!.role !== 'super_root') query = query.eq('clinica_id', req.user!.clinicaId);
+    const { data, error } = await query.order('nombre', { ascending: true });
     if (error) return next(error);
     const filas = data ?? [];
     const costos = await costoReactivosDeExamenes(filas.map((f) => f.id as string));

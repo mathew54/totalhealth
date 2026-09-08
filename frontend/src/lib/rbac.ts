@@ -19,6 +19,9 @@ export interface Profile {
   categoria_medica?: string | null;
   colegiatura?: string | null;
   firma_digital?: string | null;
+  // Firma y sello húmedo del profesional responsable (PNG data URL, para PDFs).
+  firma_imagen?: string | null;
+  sello_imagen?: string | null;
   dashboard_config?: DashboardConfig;
   mfa_activo?: boolean;
 }

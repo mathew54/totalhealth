@@ -93,3 +93,37 @@ export async function procesarLogo(file: File): Promise<LogoProcesado> {
     medidasFinales: `${LOGO_ESTANDAR.ancho}×${LOGO_ESTANDAR.alto} px`,
   }
 }
+
+/**
+ * Procesa una imagen (firma o sello húmedo) a un PNG data URL con fondo
+ * transparente, contenido dentro de un lienzo cuadrado `max`×`max` px
+ * (re-escalado a contener, sin recortar ni deformar). Comparte el pipeline
+ * de `procesarLogo` pero SIEMPRE redibuja a PNG para garantizar transparencia
+ * (a diferencia del logo, que devuelve la imagen original si ya cumple 512²).
+ */
+export async function procesarImagenPng(
+  file: File,
+  max = 512,
+): Promise<{ dataUrl: string; anchoOriginal: number; altoOriginal: number }> {
+  const raw = await leerArchivo(file)
+  const img = await cargarImagen(raw)
+  const anchoOriginal = img.naturalWidth || 0
+  const altoOriginal = img.naturalHeight || 0
+  const escala = Math.min(max / anchoOriginal, max / altoOriginal, 1)
+  const ancho = Math.max(1, Math.round(anchoOriginal * escala))
+  const alto = Math.max(1, Math.round(altoOriginal * escala))
+  const canvas = document.createElement('canvas')
+  canvas.width = max
+  canvas.height = max
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('No se pudo procesar la imagen.')
+
+  ctx.clearRect(0, 0, max, max)
+  ctx.drawImage(img, Math.round((max - ancho) / 2), Math.round((max - alto) / 2), ancho, alto)
+
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    anchoOriginal,
+    altoOriginal,
+  }
+}

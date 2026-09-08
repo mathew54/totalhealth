@@ -19,6 +19,10 @@ export const createStaffSchema = z.object({
   categoria_medica: z.string().max(50).optional(),
   colegiatura: z.string().max(50).optional(),
   firma_digital: z.string().max(2000).optional(),
+  // Firma y sello húmedo del profesional responsable como data URL PNG
+  // (mismo límite que logo_url en app_config).
+  firma_imagen: z.string().max(3_000_000).optional(),
+  sello_imagen: z.string().max(3_000_000).optional(),
 });
 
 // La cédula no se puede editar: se define al crear el personal y es inmutable
@@ -27,6 +31,7 @@ export const createStaffSchema = z.object({
 export const updateStaffSchema = z.object({
   nombre_completo: z.string().min(3).optional(),
   roles: z.array(roleEnum).min(1).optional(),
+  password: z.string().min(8, 'Minimo 8 caracteres').optional(),
   telefono: z.string().optional(),
   country_code: z.string().max(6).optional(),
   local_number: z.string().max(20).optional(),
@@ -36,6 +41,8 @@ export const updateStaffSchema = z.object({
   categoria_medica: z.string().max(50).optional().nullable(),
   colegiatura: z.string().max(50).optional().nullable(),
   firma_digital: z.string().max(2000).optional().nullable(),
+  firma_imagen: z.string().max(3_000_000).optional().nullable(),
+  sello_imagen: z.string().max(3_000_000).optional().nullable(),
 });
 
 export const auditoriaQuerySchema = z.object({

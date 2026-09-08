@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import { headerTextColor, useConfigStore } from '../../lib/configStore'
-import { LOGO_ESTANDAR, procesarLogo } from '../../lib/logo'
+import { LOGO_ESTANDAR, procesarLogo, procesarImagenPng } from '../../lib/logo'
 import { WhatsAppConfig } from './WhatsAppConfig'
 import BackupsTab from './BackupsTab'
 import ComercialTab from './ComercialTab'
@@ -76,6 +76,54 @@ function Errtag({ children }: { children: string | null }) {
   return children ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{children}</p> : null
 }
 
+/** Sube una imagen (firma/sello), la convierte a PNG transparente y muestra preview. */
+function ImgPicker({ value, onChange, onError }: {
+  value: { dataUrl: string; nombre: string } | null
+  onChange: (v: { dataUrl: string; nombre: string } | null) => void
+  onError?: (m: string) => void
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {value?.dataUrl ? <img src={value.dataUrl} alt="imagen" className="max-h-full max-w-full object-contain" /> : <span className="text-xs text-slate-300">PNG</span>}
+      </div>
+      <div className="space-y-1.5">
+        <button
+          type="button"
+          onClick={() => ref.current?.click()}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          {value ? 'Cambiar imagen' : 'Subir imagen'}
+        </button>
+        {value && (
+          <button type="button" onClick={() => onChange(null)} className="block text-xs font-medium text-red-600 hover:text-red-700">
+            Quitar
+          </button>
+        )}
+      </div>
+      <input
+        ref={ref}
+        type="file"
+        accept="image/png,image/jpeg"
+        className="hidden"
+        onChange={async (e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (!f) return
+          try {
+            const { dataUrl } = await procesarImagenPng(f)
+            onChange({ dataUrl, nombre: f.name })
+            onError?.('')
+          } catch (err) {
+            onError?.((err as Error).message)
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 // ---------- Personal ----------
 const ROL_LABELS: Record<string, string> = {
   super_root: 'Super root',
@@ -93,6 +141,9 @@ function PersonalTab() {
   const [editando, setEditando] = useState<Profile | null>(null)
   const [rolesSel, setRolesSel] = useState<string[]>([])
   const [especSel, setEspecSel] = useState<string[]>([])
+  const [firmaImg, setFirmaImg] = useState<{ dataUrl: string; nombre: string } | null>(null)
+  const [selloImg, setSelloImg] = useState<{ dataUrl: string; nombre: string } | null>(null)
+  const [imgError, setImgError] = useState<string | null>(null)
 
   const { data: staff = [], isLoading } = useQuery<Profile[]>({
     queryKey: ['staff'],
@@ -142,6 +193,9 @@ function PersonalTab() {
     setEditando(p)
     setRolesSel(p.roles?.length ? p.roles : [p.role])
     setEspecSel(p.especialidades ?? [])
+    setFirmaImg(p.firma_imagen ? { dataUrl: p.firma_imagen, nombre: 'firma' } : null)
+    setSelloImg(p.sello_imagen ? { dataUrl: p.sello_imagen, nombre: 'sello' } : null)
+    setImgError(null)
     setError(null)
     setSuccessMsg(null)
   }
@@ -164,7 +218,8 @@ function PersonalTab() {
       local_number: fd.get('telefono_local_number') || undefined,
       especialidades: especSel,
       colegiatura: fd.get('colegiatura') || undefined,
-      firma_digital: fd.get('firma_digital') || undefined,
+      firma_imagen: firmaImg?.dataUrl ?? undefined,
+      sello_imagen: selloImg?.dataUrl ?? undefined,
     })
   }
 
@@ -176,8 +231,9 @@ function PersonalTab() {
       return
     }
     const fd = new FormData(e.currentTarget)
+    const nuevaContrasena = String(fd.get('password') ?? '').trim()
     const rolActivo = rolesSel[0] as Rol
-    const medico: Profile = {
+    const medico: Profile & { password?: string } = {
       ...editando,
       role: rolActivo,
       roles: rolesSel as Rol[],
@@ -188,7 +244,9 @@ function PersonalTab() {
       especialidad_activa: especSel[0] ?? null,
       categoria_medica: String(fd.get('categoria_medica') ?? '') || null,
       colegiatura: String(fd.get('colegiatura') ?? '') || null,
-      firma_digital: String(fd.get('firma_digital') ?? '') || null,
+      firma_imagen: firmaImg?.dataUrl ?? null,
+      sello_imagen: selloImg?.dataUrl ?? null,
+      ...(nuevaContrasena ? { password: nuevaContrasena } : {}),
     }
     updateStaff.mutate({ id: editando.id, p: { ...medico, cedula: undefined } })
   }
@@ -201,11 +259,12 @@ function PersonalTab() {
   }
 
   const esMedico = rolesSel.includes('medico')
+  const esFirmante = rolesSel.includes('medico') || rolesSel.includes('laboratorio')
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <button onClick={() => { setShowForm((v) => !v); setError(null); setSuccessMsg(null) }} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+        <button onClick={() => { setShowForm((v) => !v); setEditando(null); setFirmaImg(null); setSelloImg(null); setImgError(null); setError(null); setSuccessMsg(null) }} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
           {showForm ? 'Cancelar' : '+ Nuevo personal'}
         </button>
       </div>
@@ -236,31 +295,46 @@ function PersonalTab() {
           <Field label="Documento de identidad (V/E/J/P/C)"><input name="cedula" className={inputCls} placeholder="V-12345678, P-…, J-…" /></Field>
           <Field label="Teléfono"><PhoneInput name="telefono" /></Field>
           {esMedico && (
+            <div className="sm:col-span-2">
+              <Field label={`Especialidades del catálogo (${especSel.length} seleccionadas) — la primera será la activa`}>
+                <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 p-3 sm:grid-cols-2">
+                  {(catalogo?.especialidades ?? []).map((esp) => (
+                    <label key={esp.id} className="flex items-center gap-1.5 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={especSel.includes(esp.id)}
+                        onChange={() => toggleEspec(esp.id)}
+                        className="accent-brand-600"
+                      />
+                      {esp.nombre}
+                      <span className="text-[10px] uppercase text-slate-400">{esp.categoria ?? ''}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+          )}
+          {esFirmante && (
             <>
-              <div className="sm:col-span-2">
-                <Field label={`Especialidades del catálogo (${especSel.length} seleccionadas) — la primera será la activa`}>
-                  <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 p-3 sm:grid-cols-2">
-                    {(catalogo?.especialidades ?? []).map((esp) => (
-                      <label key={esp.id} className="flex items-center gap-1.5 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={especSel.includes(esp.id)}
-                          onChange={() => toggleEspec(esp.id)}
-                          className="accent-brand-600"
-                        />
-                        {esp.nombre}
-                        <span className="text-[10px] uppercase text-slate-400">{esp.categoria ?? ''}</span>
-                      </label>
-                    ))}
-                  </div>
-                </Field>
-              </div>
               <Field label="Colegiatura / Licencia"><input name="colegiatura" className={inputCls} placeholder="Ej. MPPS 12345" /></Field>
-              <Field label="Firma / sello digital (hash o imagen)"><input name="firma_digital" className={inputCls} placeholder="sha256:… o URL de sello" /></Field>
+              <Field label="Firma (imagen PNG)">
+                <ImgPicker
+                  value={firmaImg}
+                  onChange={(v) => { setFirmaImg(v); setImgError(null) }}
+                  onError={setImgError}
+                />
+              </Field>
+              <Field label="Sello húmedo (imagen PNG)">
+                <ImgPicker
+                  value={selloImg}
+                  onChange={(v) => { setSelloImg(v); setImgError(null) }}
+                  onError={setImgError}
+                />
+              </Field>
             </>
           )}
           <div className="sm:col-span-2">
-            <Errtag>{error}</Errtag>
+            <Errtag>{imgError || error}</Errtag>
             {successMsg && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{successMsg}</p>}
             <button type="submit" disabled={createStaff.isPending} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
               {createStaff.isPending ? 'Creando…' : 'Crear'}
@@ -304,32 +378,48 @@ function PersonalTab() {
             </div>
           </Field>
           <Field label="Teléfono"><PhoneInput name="telefono" defaultValue={editando.telefono} /></Field>
+          <Field label="Nueva contraseña (dejar en blanco para no cambiarla)"><PasswordInput name="password" minLength={8} autoComplete="new-password" placeholder="Mín. 8 caracteres" className="w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></Field>
           {esMedico && (
+            <div className="sm:col-span-2">
+              <Field label={`Especialidades del catálogo (${especSel.length} seleccionadas) — la primera será la activa`}>
+                <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-2">
+                  {(catalogo?.especialidades ?? []).map((esp) => (
+                    <label key={esp.id} className="flex items-center gap-1.5 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={especSel.includes(esp.id)}
+                        onChange={() => toggleEspec(esp.id)}
+                        className="accent-brand-600"
+                      />
+                      {esp.nombre}
+                      <span className="text-[10px] uppercase text-slate-400">{esp.categoria ?? ''}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+          )}
+          {esFirmante && (
             <>
-              <div className="sm:col-span-2">
-                <Field label={`Especialidades del catálogo (${especSel.length} seleccionadas) — la primera será la activa`}>
-                  <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-2">
-                    {(catalogo?.especialidades ?? []).map((esp) => (
-                      <label key={esp.id} className="flex items-center gap-1.5 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={especSel.includes(esp.id)}
-                          onChange={() => toggleEspec(esp.id)}
-                          className="accent-brand-600"
-                        />
-                        {esp.nombre}
-                        <span className="text-[10px] uppercase text-slate-400">{esp.categoria ?? ''}</span>
-                      </label>
-                    ))}
-                  </div>
-                </Field>
-              </div>
               <Field label="Colegiatura / Licencia"><input name="colegiatura" defaultValue={editando.colegiatura ?? ''} className={inputCls} placeholder="Ej. MPPS 12345" /></Field>
-              <Field label="Firma / sello digital (hash o imagen)"><input name="firma_digital" defaultValue={editando.firma_digital ?? ''} className={inputCls} placeholder="sha256:… o URL de sello" /></Field>
+              <Field label="Firma (imagen PNG)">
+                <ImgPicker
+                  value={firmaImg}
+                  onChange={(v) => { setFirmaImg(v); setImgError(null) }}
+                  onError={setImgError}
+                />
+              </Field>
+              <Field label="Sello húmedo (imagen PNG)">
+                <ImgPicker
+                  value={selloImg}
+                  onChange={(v) => { setSelloImg(v); setImgError(null) }}
+                  onError={setImgError}
+                />
+              </Field>
             </>
           )}
           <div className="sm:col-span-2">
-            <Errtag>{error}</Errtag>
+            <Errtag>{imgError || error}</Errtag>
             {successMsg && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{successMsg}</p>}
             <div className="mt-3 flex gap-2">
               <button type="submit" disabled={updateStaff.isPending} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">

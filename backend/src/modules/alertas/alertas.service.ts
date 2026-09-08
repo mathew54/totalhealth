@@ -10,6 +10,28 @@ export interface Umbral {
   normal_max: number | null;
   critico_min: number | null;
   critico_max: number | null;
+  edad_min: number | null;
+  edad_max: number | null;
+  sexo: 'M' | 'F' | null;
+}
+
+/** Perfil del paciente usado para elegir el rango de referencia aplicable. */
+export interface PerfilPaciente {
+  edadAnios: number | null;
+  sexo: 'M' | 'F' | null;
+}
+
+/** Edad en años cumplidos a partir de una fecha de nacimiento. */
+export function calcularEdadAnios(fechaNacimiento: string | Date | null): number | null {
+  if (!fechaNacimiento) return null;
+  const fecha = new Date(fechaNacimiento);
+  if (Number.isNaN(fecha.getTime())) return null;
+  const hoy = new Date();
+  let edad = hoy.getFullYear() - fecha.getFullYear();
+  const mesDiaActual = hoy.getMonth() * 100 + hoy.getDate();
+  const mesDiaNacimiento = fecha.getMonth() * 100 + fecha.getDate();
+  if (mesDiaActual < mesDiaNacimiento) edad -= 1;
+  return Math.max(edad, 0);
 }
 
 export interface EvaluacionAlerta {
@@ -67,22 +89,81 @@ function mostrarRef(min: number | null, max: number | null): string {
 }
 
 /**
+ * Puntúa qué tan específica es una fila de umbral para el paciente:
+ *  -1 = no aplica (su grupo etario/sexo la descarta).
+ *  Mayor puntaje = rango más específico (edad acotada > general; sexo exacto > ambos).
+ */
+function puntajeUmbral(u: Umbral, perfil: PerfilPaciente): number {
+  const { edadAnios, sexo } = perfil;
+  const acotadoMins = u.edad_min != null || u.edad_max != null;
+
+  if (edadAnios != null) {
+    if (u.edad_min != null && edadAnios < u.edad_min) return -1;
+    if (u.edad_max != null && edadAnios > u.edad_max) return -1;
+  } else if (acotadoMins) {
+    // Sin edad conocida no se pueden aplicar rangos pediátricos.
+    return -1;
+  }
+
+  let puntos = 0;
+  if (acotadoMins) puntos += 2;
+  if (sexo != null && u.sexo === sexo) puntos += 1;
+  return puntos;
+}
+
+/** Elige el umbral aplicable de cada parámetro según edad y sexo del paciente. */
+function umbralesAplicables(umbrales: Umbral[], perfil: PerfilPaciente): Umbral[] {
+  const porParametro = new Map<string, Umbral[]>();
+  for (const u of umbrales) {
+    const arr = porParametro.get(u.parametro) ?? [];
+    arr.push(u);
+    porParametro.set(u.parametro, arr);
+  }
+
+  const elegidos: Umbral[] = [];
+  for (const grupo of porParametro.values()) {
+    const aplican = grupo
+      .map((u) => ({ u, p: puntajeUmbral(u, perfil) }))
+      .filter((r) => r.p > -1);
+    if (aplican.length) {
+      // Gana el más específico; a igualdad se mantiene el primer registro.
+      aplican.sort((a, b) => b.p - a.p);
+      elegidos.push(aplican[0].u);
+      continue;
+    }
+    // Ningún rango acotado aplica: usar el general (edad sin restringir) si existe.
+    const general = grupo.find((u) => u.edad_min == null && u.edad_max == null);
+    if (general) elegidos.push(general);
+  }
+  return elegidos;
+}
+
+/**
  * Evalúa el jsonb de valores de un resultado contra los umbrales del examen.
+ * Cuando el examen define varios rangos por edad/sexo, se usa el que aplica al
+ * paciente (`perfil`); si no se proporciona el perfil, se usan los rangos generales.
  * Devuelve las alertas detectadas (vacío si todo dentro de rango).
  */
-export async function evaluarAlertas(examenId: string, valores: unknown): Promise<EvaluacionAlerta[]> {
+export async function evaluarAlertas(
+  examenId: string,
+  valores: unknown,
+  perfil?: PerfilPaciente,
+): Promise<EvaluacionAlerta[]> {
   if (!valores || typeof valores !== 'object') return [];
 
   const { data: umbrales } = await getSupabase()
     .from('parametros_referencia')
-    .select('id, examen_id, parametro, nombre, unidad, normal_min, normal_max, critico_min, critico_max')
+    .select('id, examen_id, parametro, nombre, unidad, normal_min, normal_max, critico_min, critico_max, edad_min, edad_max, sexo')
     .eq('examen_id', examenId)
     .eq('activo', true);
 
   if (!umbrales?.length) return [];
 
+  const perfilFijo: PerfilPaciente = perfil ?? { edadAnios: null, sexo: null };
+  const aplicables = umbralesAplicables(umbrales as Umbral[], perfilFijo);
+
   const alertas: EvaluacionAlerta[] = [];
-  for (const u of umbrales as Umbral[]) {
+  for (const u of aplicables) {
     const v = (valores as Record<string, unknown>)[u.parametro];
     const alerta = evaluarValor(u, v);
     if (alerta) alertas.push(alerta);

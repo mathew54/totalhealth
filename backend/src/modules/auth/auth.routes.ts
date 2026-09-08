@@ -391,7 +391,7 @@ router.get('/me', authRequired, async (req, res, next) => {
     if (!req.user) return next(forbidden());
     const { data: profile, error } = await getSupabase()
       .from('profiles')
-      .select('id, clinica_id, nombre_completo, cedula, telefono, roles, activo, especialidad, especialidades, especialidad_activa, categoria_medica, colegiatura, firma_digital, dashboard_config, mfa_activo, created_at')
+      .select('id, clinica_id, nombre_completo, cedula, telefono, roles, activo, especialidad, especialidades, especialidad_activa, categoria_medica, colegiatura, firma_digital, firma_imagen, sello_imagen, dashboard_config, mfa_activo, created_at')
       .eq('id', req.user.id)
       .single();
     if (error) return next(error);
@@ -445,12 +445,14 @@ router.patch('/perfil', authRequired, validate(perfilUpdateSchema), async (req, 
     }
     if (body.colegiatura !== undefined) update.colegiatura = body.colegiatura;
     if (body.firma_digital !== undefined) update.firma_digital = encryptCampo(body.firma_digital);
+    if (body.firma_imagen !== undefined) update.firma_imagen = body.firma_imagen;
+    if (body.sello_imagen !== undefined) update.sello_imagen = body.sello_imagen;
 
     const { data: actualizado, error } = await getSupabase()
       .from('profiles')
       .update(update)
       .eq('id', user.id)
-      .select('id, especialidad_activa, especialidades, dashboard_config, colegiatura, firma_digital')
+      .select('id, especialidad_activa, especialidades, dashboard_config, colegiatura, firma_digital, firma_imagen, sello_imagen')
       .single();
     if (error) return next(error);
 

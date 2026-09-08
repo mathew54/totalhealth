@@ -217,7 +217,7 @@ router.get('/mis-resultados', portalAuth, async (req, res, next) => {
     const resultadoIds = lineas.map((l) => l.resultado_id).filter(Boolean) as string[];
     let resultados: Record<string, unknown>[] = [];
     if (resultadoIds.length) {
-      const { data } = await getSupabase().from('resultados').select('id, valores, observaciones, procesado_at, pdf_path').in('id', resultadoIds);
+      const { data } = await getSupabase().from('resultados').select('id, valores, observaciones, procesado_at, pdf_path, bioanalista_id, firma_hash').in('id', resultadoIds);
       resultados = data ?? [];
     }
 
@@ -238,10 +238,23 @@ router.get('/mis-resultados', portalAuth, async (req, res, next) => {
 
     const porLinea = new Map(lineas.map((l) => [l.resultado_id, l]));
 
+    // Perfil del bioanalista responsable (firma + sello húmedo para el PDF).
+    const bioanalistaIds = [...new Set(resultados.map((r) => r.bioanalista_id as string | null).filter(Boolean))] as string[];
+    let bioanalistas: Record<string, unknown>[] = [];
+    if (bioanalistaIds.length) {
+      const { data } = await getSupabase()
+        .from('profiles')
+        .select('id, nombre_completo, colegiatura, firma_imagen, sello_imagen')
+        .in('id', bioanalistaIds);
+      bioanalistas = data ?? [];
+    }
+    const bioanalistaPorId = new Map(bioanalistas.map((b) => [b.id, b]));
+
     res.json(
       resultados.map((r) => {
         const linea = porLinea.get(r.id as string);
         const solicitud = (solicitudesRes.data ?? []).find((s) => s.id === linea?.solicitud_id);
+        const bio = bioanalistaPorId.get(String(r.bioanalista_id ?? ''));
         return {
           resultado_id: r.id,
           examen: linea ? examenes.get(linea.examen_id as string) ?? null : null,
@@ -252,6 +265,16 @@ router.get('/mis-resultados', portalAuth, async (req, res, next) => {
           solicitud_id: solicitud?.id ?? null,
           estado_solicitud: solicitud?.estado ?? null,
           alertas: linea ? alertasPorDetalle.get(linea.id) ?? [] : [],
+          bioanalista_id: r.bioanalista_id ?? null,
+          firma_hash: r.firma_hash ?? null,
+          bioanalista: bio
+            ? {
+                nombre_completo: bio.nombre_completo ?? null,
+                colegiatura: bio.colegiatura ?? null,
+                firma_imagen: bio.firma_imagen ?? null,
+                sello_imagen: bio.sello_imagen ?? null,
+              }
+            : null,
         };
       }),
     );

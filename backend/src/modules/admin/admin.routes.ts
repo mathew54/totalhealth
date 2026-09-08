@@ -139,6 +139,8 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
         }
         if (body.colegiatura) updateData.colegiatura = body.colegiatura;
         if (body.firma_digital) updateData.firma_digital = encryptCampo(body.firma_digital);
+        if (body.firma_imagen) updateData.firma_imagen = body.firma_imagen;
+        if (body.sello_imagen) updateData.sello_imagen = body.sello_imagen;
 
         const { data: updated, error: updateError } = await getSupabase()
           .from('profiles')
@@ -179,6 +181,8 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
           categoria_medica: medico.categoria_medica,
           colegiatura: body.colegiatura ?? null,
           firma_digital: encryptCampo(body.firma_digital ?? null),
+          firma_imagen: body.firma_imagen ?? null,
+          sello_imagen: body.sello_imagen ?? null,
         })
         .select()
         .single();
@@ -251,7 +255,7 @@ router.post('/staff', validate(createStaffSchema), async (req, res, next) => {
 router.get('/staff', async (req, res, next) => {
   try {
     const user = req.user!;
-    let query = getSupabase().from('profiles').select('id, role, roles, nombre_completo, cedula, telefono, activo, especialidad, especialidades, especialidad_activa, categoria_medica, colegiatura, firma_digital, created_at');
+    let query = getSupabase().from('profiles').select('id, role, roles, nombre_completo, cedula, telefono, activo, especialidad, especialidades, especialidad_activa, categoria_medica, colegiatura, firma_digital, firma_imagen, sello_imagen, created_at');
 
     if (user.role !== 'super_root') query = query.eq('clinica_id', user.clinicaId);
 
@@ -287,7 +291,10 @@ router.patch('/staff/:id', validate(updateStaffSchema), async (req, res, next) =
       return next(forbidden('Solo super_root puede asignar admin'));
     }
 
-    const update: Record<string, unknown> = { ...body };
+    // La contraseña vive en Supabase Auth, no en profiles: se actualiza aparte.
+    const { password, ...restoPerfil } = body;
+
+    const update: Record<string, unknown> = { ...restoPerfil };
     delete update.country_code;
     delete update.local_number;
     delete update.cedula; // cédula inmutable: no se permite editar
@@ -300,6 +307,11 @@ router.patch('/staff/:id', validate(updateStaffSchema), async (req, res, next) =
       update.telefono = encryptCampo(telefonoDesdeBody(body));
     }
     if (body.firma_digital !== undefined) update.firma_digital = encryptCampo(body.firma_digital);
+
+    if (password) {
+      const { error: passError } = await getSupabase().auth.admin.updateUserById(id, { password });
+      if (passError) return next(badRequest('No se pudo cambiar la contraseña: ' + passError.message));
+    }
 
     // Normaliza el array de especialidades y deriva la primaria + categoría.
     if (body.especialidades !== undefined || body.especialidad !== undefined) {
@@ -323,7 +335,7 @@ router.patch('/staff/:id', validate(updateStaffSchema), async (req, res, next) =
         accion: 'UPDATE',
         tabla: 'profiles',
         registroId: id,
-        detalles: update,
+        detalles: { ...update, password_actualizada: Boolean(password) },
       },
       user.id,
     );

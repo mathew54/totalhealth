@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { api, getApiError } from '../../lib/api'
 import { useSessionStore } from '../../stores/sessionStore'
 import PrintHeader from '../../components/ui/PrintHeader'
@@ -1049,7 +1049,14 @@ function DetalleModal({ solicitudId, rol, onClose, onMutado }: { solicitudId: st
   })
 
   const [preError, setPreError] = useState<string | null>(null)
+  const [marcados, setMarcados] = useState<Set<string>>(new Set())
   const [alertasGeneradas, setAlertasGeneradas] = useState<AlertaGenerada[]>([])
+
+  useEffect(() => {
+    if (preanalitica) {
+      setMarcados(new Set(preanalitica.validaciones.filter((v) => v.cumplido).map((v) => v.id)))
+    }
+  }, [preanalitica])
 
   const changeEstado = useMutation({
     mutationFn: (estado: string) => api.patch(`/solicitudes/${solicitudId}/estado`, { estado }),
@@ -1254,35 +1261,56 @@ function DetalleModal({ solicitudId, rol, onClose, onMutado }: { solicitudId: st
             </div>
 
             {preanalitica?.config.habilitado && (
-              <div className={`mt-4 rounded-xl border p-4 ${preanalitica.completado ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+              <div className={`mt-4 rounded-xl border p-4 ${preanalitica.completado ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40' : 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40'}`}>
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-slate-800">Validación pre-analítica</h4>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${preanalitica.completado ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Validación pre-analítica</h4>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${preanalitica.completado ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'}`}>
                     {preanalitica.completado ? 'Completada' : 'Pendiente'}
                     {preanalitica.config.obligatorio ? ' · obligatoria' : ' · opcional'}
                   </span>
                 </div>
 
                 <ul className="mt-3 space-y-1.5">
-                  {preanalitica.validaciones.map((v) => (
-                    <li key={v.id} className="flex items-center gap-2 text-sm text-slate-700">
-                      <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${v.cumplido ? 'bg-emerald-500 text-white' : 'bg-slate-300 text-white'}`}>
-                        {v.cumplido ? '✓' : ''}
-                      </span>
-                      {v.nombre}
-                    </li>
-                  ))}
+                  {preanalitica.validaciones.map((v) => {
+                    const checked = marcados.has(v.id)
+                    const clickeable = !preanalitica.completado && esLab
+                    return (
+                      <li key={v.id} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                        {clickeable ? (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              const next = new Set(marcados)
+                              if (next.has(v.id)) next.delete(v.id)
+                              else next.add(v.id)
+                              setMarcados(next)
+                            }}
+                            className="h-4 w-4 rounded accent-emerald-600"
+                          />
+                        ) : (
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${v.cumplido ? 'bg-emerald-500 text-white' : 'bg-slate-300 text-white'}`}>
+                            {v.cumplido ? '✓' : ''}
+                          </span>
+                        )}
+                        {v.nombre}
+                      </li>
+                    )
+                  })}
                 </ul>
 
                 {!preanalitica.completado && esLab && (
                   <>
-                    {preError && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{preError}</p>}
+                    <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                      Marca solo las condiciones que realmente verificaste. No se enviará como verificada ninguna que dejes sin marcar.
+                    </p>
+                    {preError && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{preError}</p>}
                     <button
-                      onClick={() => validarPreanalitica.mutate(preanalitica.validaciones.map((v) => v.id))}
-                      disabled={validarPreanalitica.isPending}
-                      className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                      onClick={() => validarPreanalitica.mutate([...marcados])}
+                      disabled={validarPreanalitica.isPending || marcados.size === 0}
+                      className="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
                     >
-                      {validarPreanalitica.isPending ? 'Guardando…' : 'Confirmar puntos verificados'}
+                      {validarPreanalitica.isPending ? 'Guardando…' : `Confirmar ${marcados.size} punto(s) verificado(s)`}
                     </button>
                   </>
                 )}

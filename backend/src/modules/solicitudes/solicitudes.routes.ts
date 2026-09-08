@@ -7,7 +7,7 @@ import { requireRole } from '../../middleware/rbac.js';
 import { validate } from '../../middleware/validate.js';
 import { badRequest, notFound, forbidden, conflict } from '../../utils/httpError.js';
 import { notificarResultadoListo } from '../../services/notifier.js';
-import { evaluarAlertas, registrarAlertas } from '../alertas/alertas.service.js';
+import { evaluarAlertas, registrarAlertas, calcularEdadAnios } from '../alertas/alertas.service.js';
 import { consumirReactivo, consumirReactivosDeExamen } from '../../services/reactivosService.js';
 import {
   createSolicitudSchema,
@@ -582,6 +582,19 @@ router.post(
 
       const alertasGeneradas: Array<Record<string, unknown>> = [];
       const catalogo = await catalogoExamenes();
+
+      // Perfil del paciente (edad y sexo) para elegir el rango de referencia
+      // aplicable (adulto vs pediátrico) al evaluar las alertas.
+      const { data: perfilPaciente } = await getSupabase()
+        .from('pacientes')
+        .select('fecha_nacimiento, sexo')
+        .eq('id', solicitud.paciente_id)
+        .maybeSingle();
+      const perfil = {
+        edadAnios: calcularEdadAnios((perfilPaciente?.fecha_nacimiento as string | null) ?? null),
+        sexo: (perfilPaciente?.sexo as 'M' | 'F' | null) ?? null,
+      };
+
       for (const ins of insertados ?? []) {
         await getSupabase()
           .from('solicitudes_detalle')
@@ -592,7 +605,7 @@ router.post(
         const detalle = (lineasDB ?? []).find((l) => l.id === ins.solicitud_detalle_id);
         const valores = lineas.find((l) => l.solicitud_detalle_id === ins.solicitud_detalle_id)?.valores;
         if (detalle?.examen_id && valores) {
-          const alertas = await evaluarAlertas(detalle.examen_id, valores);
+          const alertas = await evaluarAlertas(detalle.examen_id, valores, perfil);
           await registrarAlertas({
             clinicaId: solicitud.clinica_id ?? null,
             pacienteId: solicitud.paciente_id,

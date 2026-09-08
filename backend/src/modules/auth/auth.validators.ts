@@ -39,4 +39,7 @@ export const perfilUpdateSchema = z.object({
     .optional(),
   colegiatura: z.string().max(50).optional().nullable(),
   firma_digital: z.string().max(2000).optional().nullable(),
+  // Firma y sello húmedo del profesional (autogestionados, PNG data URL).
+  firma_imagen: z.string().max(3_000_000).optional().nullable(),
+  sello_imagen: z.string().max(3_000_000).optional().nullable(),
 });

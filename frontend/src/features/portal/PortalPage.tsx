@@ -23,6 +23,12 @@ interface Resultado {
   pdf_path: string | null
   estado_solicitud: string | null
   alertas: { parametro: string; valor: string | null; nivel: 'alerta' | 'critico'; motivo: string }[]
+  bioanalista?: {
+    nombre_completo?: string | null
+    colegiatura?: string | null
+    firma_imagen?: string | null
+    sello_imagen?: string | null
+  } | null
 }
 
 interface Recipe {
@@ -359,6 +365,15 @@ function PortalPanel({ token, paciente }: { token: string; paciente: PortalSessi
                             valores: r.valores,
                             observaciones: r.observaciones,
                             branding,
+                            procesadoAt: r.procesado_at,
+                            bioanalista: r.bioanalista
+                              ? {
+                                  nombre: r.bioanalista.nombre_completo,
+                                  colegiatura: r.bioanalista.colegiatura,
+                                  firma_imagen: r.bioanalista.firma_imagen,
+                                  sello_imagen: r.bioanalista.sello_imagen,
+                                }
+                              : undefined,
                           })
                         }
                         className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700"

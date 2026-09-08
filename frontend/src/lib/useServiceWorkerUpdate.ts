@@ -17,6 +17,9 @@ export function useServiceWorkerUpdate() {
       if (!newSW) return
       newSW.addEventListener('statechange', () => {
         if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+          // Nueva versión lista: se aplica de inmediato para que el usuario
+          // siempre use el build más reciente (evita chunks obsoletos al navegar).
+          sw?.waiting?.postMessage({ type: 'SKIP_WAITING' })
           setUpdateReady(true)
         }
       })

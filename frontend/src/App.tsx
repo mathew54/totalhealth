@@ -4,6 +4,7 @@ import { useSessionStore } from './stores/sessionStore'
 import { useConfigStore } from './lib/configStore'
 import StaffLayout from './layouts/StaffLayout'
 import UpdateBanner from './components/ui/UpdateBanner'
+import ErrorBoundary from './components/ErrorBoundary'
 
 const LoginPage = lazy(() => import('./features/auth/LoginPage'))
 const PortalPage = lazy(() => import('./features/portal/PortalPage'))
@@ -87,10 +88,12 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <Suspense fallback={<div className="flex min-h-screen items-center justify-center text-slate-400">Cargando…</div>}>
-        <AppRoutes />
-      </Suspense>
-      <UpdateBanner />
+      <ErrorBoundary>
+        <Suspense fallback={<div className="flex min-h-screen items-center justify-center text-slate-400">Cargando…</div>}>
+          <AppRoutes />
+        </Suspense>
+        <UpdateBanner />
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }

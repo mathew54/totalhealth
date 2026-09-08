@@ -1,5 +1,5 @@
 const SHELL = ['/', '/portal', '/login', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icons.svg']
-const CACHE = 'totalhealth-v1'
+const CACHE = 'totalhealth-v2'
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

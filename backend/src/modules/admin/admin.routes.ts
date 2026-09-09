@@ -57,8 +57,8 @@ async function infoEspecialidad(id: string): Promise<{ nombre: string; categoria
  * (única) conserva el nombre de la primera para los filtros existentes.
  */
 async function prepararPerfilMedico(body: {
-  especialidades?: string[];
-  especialidad?: string;
+  especialidades?: string[] | null;
+  especialidad?: string | null;
   categoria_medica?: string | null;
 }): Promise<{ especialidades: string[]; especialidad: string | null; categoria_medica: string | null; especialidad_activa: string | null }> {
   const especialidades = body.especialidades?.length ? [...new Set(body.especialidades)] : [];

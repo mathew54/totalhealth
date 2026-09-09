@@ -14,11 +14,12 @@ export const createStaffSchema = z.object({
   country_code: z.string().max(6).optional(),
   local_number: z.string().max(20).optional(),
   // Perfil médico flexible: N especialidades, colegiatura/licencia y firma.
-  especialidad: z.string().max(100).optional(),
-  especialidades: z.array(z.string().max(100)).max(10).optional(),
-  categoria_medica: z.string().max(50).optional(),
-  colegiatura: z.string().max(50).optional(),
-  firma_digital: z.string().max(2000).optional(),
+  // Son opcionales/nullables porque el frontend envía null en perfiles no médicos.
+  especialidad: z.string().max(100).optional().nullable(),
+  especialidades: z.array(z.string().max(100)).max(10).optional().nullable(),
+  categoria_medica: z.string().max(50).optional().nullable(),
+  colegiatura: z.string().max(50).optional().nullable(),
+  firma_digital: z.string().max(2000).optional().nullable(),
   // Firma y sello húmedo del profesional responsable como data URL PNG
   // (mismo límite que logo_url en app_config).
   firma_imagen: z.string().max(3_000_000).optional(),
@@ -36,8 +37,8 @@ export const updateStaffSchema = z.object({
   country_code: z.string().max(6).optional(),
   local_number: z.string().max(20).optional(),
   activo: z.boolean().optional(),
-  especialidad: z.string().max(100).optional(),
-  especialidades: z.array(z.string().max(100)).max(10).optional(),
+  especialidad: z.string().max(100).optional().nullable(),
+  especialidades: z.array(z.string().max(100)).max(10).optional().nullable(),
   categoria_medica: z.string().max(50).optional().nullable(),
   colegiatura: z.string().max(50).optional().nullable(),
   firma_digital: z.string().max(2000).optional().nullable(),

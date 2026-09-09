@@ -14,6 +14,7 @@ import { obtenerTasaUsdActiva, obtenerTasasActivas, usdABs, bsAUsd, montoAUsd } 
 import { persistirFactura, calcularIgtf, calcularRetenciones, redondear } from '../../services/factura.js';
 import {
   cobroLaboratorioSchema,
+  cobroConsultaSchema,
   pagosQuery,
   cambioEstadoSchema,
   reembolsoSchema,
@@ -330,6 +331,272 @@ router.post('/laboratorio', validate(cobroLaboratorioSchema), async (req, res, n
           total_linea: redondear(unitario + ivaLinea),
         };
       }),
+    });
+    await getSupabase().from('pagos').update({ factura_id: factura.id }).eq('id', pago.id);
+
+    res.status(201).json({
+      pago: { ...pago, factura_id: factura.id },
+      total: totalUsd,
+      total_usd: totalUsd,
+      descuento,
+      iva,
+      base_gravada: baseGravada,
+      base_exenta: baseExenta,
+      igtf,
+      retencion_iva,
+      retencion_islr,
+      monto: montoACobrar,
+      monto_final: montoFinal,
+      monto_usd: montoUsd,
+      factura_total: facturaTotal,
+      prepago_usado_usd: prepagoUsadoUsd,
+      convenio_id: convenioId,
+      descuento_motivo: descuentoMotivo,
+      moneda,
+      tasa_usd: tasaUsd,
+      factura: {
+        id: factura.id,
+        serie: factura.serie,
+        numero_factura: factura.numero_factura,
+        numero_control: factura.numero_control,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/pagos/consulta
+ * Cobra una consulta médica (agenda) aplicando descuento opcional, IGTF y
+ * retenciones VE. La tarifa base viene de `consultas.monto_base_usd`
+ * (asignada al agendar desde tarifas_consulta). Genera recibo con IVA
+ * según el impuesto de la tarifa (gravado / exento / no_sujeto).
+ */
+router.post('/consulta', validate(cobroConsultaSchema), async (req, res, next) => {
+  try {
+    const body = req.body as z.infer<typeof cobroConsultaSchema>;
+    const user = req.user!;
+
+    const { data: consulta, error: cErr } = await getSupabase()
+      .from('consultas')
+      .select('id, paciente_id, clinica_id, medico_id, tipo_consulta, monto_base_usd, estado_pago, tarifa_consulta_id, motivo')
+      .eq('id', body.consulta_id)
+      .single();
+    if (cErr || !consulta) return next(notFound('Consulta no encontrada'));
+    if (consulta.estado_pago === 'pagada') return next(conflict('Esta consulta ya fue cobrada'));
+    if (consulta.estado_pago === 'anulada') return next(conflict('La consulta está anulada'));
+
+    const pacienteFacturarId = body.paciente_id ?? (consulta.paciente_id as string);
+    const totalUsd = Number(consulta.monto_base_usd);
+
+    // Impuesto de la tarifa.
+    const impuestoTipo: 'gravado' | 'exento' | 'no_sujeto' =
+      (consulta.tarifa_consulta_id as string | null)
+        ? (await getSupabase().from('tarifas_consulta').select('impuesto').eq('id', consulta.tarifa_consulta_id).maybeSingle()).data?.impuesto as any ?? 'gravado'
+        : 'gravado';
+
+    let gravada = 0;
+    let exenta = 0;
+    if (impuestoTipo === 'exento' || impuestoTipo === 'no_sujeto') {
+      exenta = totalUsd;
+    } else {
+      gravada = totalUsd;
+    }
+
+    const { data: paciente, error: pacErr } = await getSupabase()
+      .from('pacientes')
+      .select('id, nombre_completo, rif, direccion_fiscal, direccion, convenio_id')
+      .eq('id', pacienteFacturarId)
+      .single();
+    if (pacErr || !paciente) return next(notFound('Cliente a facturar no encontrado'));
+
+    // Descuento manual.
+    let descuentoManual = Number(body.descuento ?? 0);
+    if (descuentoManual < 0) return next(badRequest('Descuento inválido'));
+    if (descuentoManual > totalUsd) descuentoManual = totalUsd;
+
+    // Convenio del paciente.
+    let convenioDiscount = 0;
+    let convenioId: string | null = null;
+    if (paciente?.convenio_id) {
+      const { data: convenio } = await getSupabase()
+        .from('convenios')
+        .select('nombre, descuento_porcentaje, activo')
+        .eq('id', paciente.convenio_id)
+        .maybeSingle();
+      if (convenio && convenio.activo) {
+        convenioDiscount = redondear((totalUsd - descuentoManual) * (Number(convenio.descuento_porcentaje) / 100));
+        convenioId = paciente.convenio_id;
+      }
+    }
+
+    const baseNeto = redondear(totalUsd - descuentoManual - convenioDiscount);
+    const descuento = redondear(Math.max(0, totalUsd - baseNeto));
+    const motivos: string[] = [];
+    if (descuento > 0) {
+      if (descuentoManual > 0) motivos.push(body.descuento_motivo ?? 'Descuento');
+      if (convenioId) motivos.push('Convenio');
+    }
+    const descuentoMotivo = motivos.length ? motivos.join(' · ') : null;
+
+    // Prorrateo gravada/exenta.
+    let baseGravadaUsd = gravada;
+    let baseExentaUsd = exenta;
+    if (descuento > 0 && totalUsd > 0) {
+      const dGravada = descuento * (gravada / totalUsd);
+      baseGravadaUsd = redondear(gravada - dGravada);
+      baseExentaUsd = redondear(exenta - (descuento - dGravada));
+    }
+
+    const ivaPct = await obtenerIvaPorcentaje();
+    const ivaUsd = redondear(baseGravadaUsd * ivaPct);
+    const montoUsd = redondear(baseGravadaUsd + baseExentaUsd + ivaUsd);
+
+    const moneda = body.moneda ?? 'USD';
+    let tasaUsd: number | null = null;
+    if (moneda === 'BS') {
+      tasaUsd = await obtenerTasaUsdActiva();
+      if (tasaUsd == null) {
+        return next(badRequest('No hay tasa de cambio del día. Configúrala en Administración → Tasas de cambio.'));
+      }
+    }
+
+    const aMoneda = (usd: number): number => {
+      if (moneda !== 'BS') return usd;
+      return usdABs(usd, tasaUsd) ?? 0;
+    };
+    const baseGravada = aMoneda(baseGravadaUsd);
+    const baseExenta = aMoneda(baseExentaUsd);
+    const iva = aMoneda(ivaUsd);
+
+    // Prepago.
+    let prepagoUsadoUsd = 0;
+    let montoACobrar = aMoneda(montoUsd);
+    if (body.usar_prepago) {
+      const { data: tarjeta } = await getSupabase()
+        .from('tarjetas_prepago')
+        .select('id, saldo_usd')
+        .eq('paciente_id', pacienteFacturarId)
+        .maybeSingle();
+      if (tarjeta && Number(tarjeta.saldo_usd) > 0) {
+        prepagoUsadoUsd = redondear(Math.min(Number(tarjeta.saldo_usd), montoUsd));
+        const restanteUsd = redondear(montoUsd - prepagoUsadoUsd);
+        montoACobrar = aMoneda(restanteUsd);
+        await getSupabase()
+          .from('tarjetas_prepago')
+          .update({ saldo_usd: redondear(Number(tarjeta.saldo_usd) - prepagoUsadoUsd) })
+          .eq('id', tarjeta.id);
+      }
+    }
+
+    const igtf = await calcularIgtf(montoACobrar, moneda, body.igtf_aplica !== false);
+    const { retencion_iva, retencion_islr } = await calcularRetenciones(baseGravada, iva, {
+      retencion_iva: body.retencion_iva_aplica === true,
+      retencion_islr: body.retencion_islr_aplica === true,
+    });
+    const montoFinal = redondear(Math.max(0, montoACobrar + igtf - retencion_iva - retencion_islr));
+    const facturaTotal = redondear(aMoneda(montoUsd) + igtf);
+
+    const { data: turno } = await getSupabase()
+      .from('caja_turnos')
+      .select('id')
+      .eq('clinica_id', consulta.clinica_id)
+      .eq('estado', 'abierta')
+      .maybeSingle();
+
+    const provider = getPaymentProvider();
+    let cargo;
+    try {
+      cargo = await provider.createCharge({
+        monto: montoFinal,
+        moneda,
+        metodo: body.metodo ?? 'efectivo',
+        concepto: `Consulta médica - ${consulta.motivo ?? 'Consulta'}`,
+        pacienteNombre: paciente?.nombre_completo ?? '',
+      });
+    } catch (e) {
+      return next(badRequest((e as Error).message));
+    }
+
+    const { data: pago, error: pErr } = await getSupabase()
+      .from('pagos')
+      .insert({
+        tipo: 'consulta',
+        consulta_id: consulta.id,
+        paciente_id: pacienteFacturarId,
+        clinica_id: consulta.clinica_id,
+        monto: montoACobrar,
+        moneda,
+        tasa_usd: tasaUsd,
+        descuento,
+        iva,
+        base_gravada: baseGravada,
+        base_exenta: baseExenta,
+        igtf,
+        retencion_iva,
+        retencion_islr,
+        turno_id: turno?.id ?? null,
+        metodo: body.metodo ?? 'efectivo',
+        secretaria_id: user.id,
+        estado: cargo.estado,
+        provider: provider.name,
+        provider_ref: cargo.reference,
+        convenio_id: convenioId,
+        prepago_usado_usd: prepagoUsadoUsd,
+        fecha: new Date().toISOString(),
+      })
+      .select(PAGO_COLS)
+      .single();
+    if (pErr) return next(badRequest(pErr.message));
+
+    await getSupabase()
+      .from('consultas')
+      .update({ estado_pago: 'pagada' })
+      .eq('id', consulta.id);
+
+    // Nombre del médico para la factura.
+    let medicoNombre = '';
+    if (consulta.medico_id) {
+      const { data: medico } = await getSupabase()
+        .from('profiles')
+        .select('nombre_completo')
+        .eq('id', consulta.medico_id)
+        .maybeSingle();
+      medicoNombre = medico?.nombre_completo ?? '';
+    }
+
+    const factura = await persistirFactura({
+      clinica_id: consulta.clinica_id,
+      pago_id: pago.id as string,
+      consulta_id: consulta.id,
+      paciente_id: pacienteFacturarId,
+      tipo_documento: 'recibo',
+      moneda,
+      tasa_usd: tasaUsd,
+      base_gravada: baseGravada,
+      base_exenta: baseExenta,
+      iva,
+      descuento,
+      igtf,
+      retencion_iva,
+      retencion_islr,
+      total: facturaTotal,
+      receptor_razon_social: paciente?.nombre_completo ?? '',
+      receptor_rif: paciente?.rif ?? null,
+      receptor_direccion: paciente?.direccion_fiscal ?? paciente?.direccion ?? null,
+      emitida_por: user.id,
+      fecha_emision: new Date().toISOString(),
+      lineas: [
+        {
+          descripcion: `Consulta médica${medicoNombre ? ` - ${medicoNombre}` : ''}`,
+          cantidad: 1,
+          precio_unitario: aMoneda(totalUsd),
+          impuesto: impuestoTipo,
+          iva_linea: iva,
+          total_linea: redondear(aMoneda(totalUsd) + iva),
+        },
+      ],
     });
     await getSupabase().from('pagos').update({ factura_id: factura.id }).eq('id', pago.id);
 
@@ -901,7 +1168,8 @@ router.get('/', validate(pagosQuery, 'query'), async (req, res, next) => {
     const { usd: tasaDia } = await obtenerTasasActivas();
     let totalUsd = 0;
     for (const p of rows) {
-      if (p.estado === 'reembolsado') continue;
+      // Los pagos reembolsados o anulados ya no cuentan como ingreso.
+      if (p.estado === 'reembolsado' || p.estado === 'anulado') continue;
       const usd = await montoAUsd(Number(p.monto), String(p.moneda ?? 'USD'), p.tasa_usd ? Number(p.tasa_usd) : null);
       totalUsd += usd ?? 0;
     }

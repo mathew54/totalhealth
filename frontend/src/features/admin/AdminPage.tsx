@@ -12,13 +12,17 @@ import PhoneInput from '../../components/ui/PhoneInput'
 import { PasswordInput } from '../../components/ui/PasswordInput'
 import { formatearTelefono } from '../../lib/phone'
 import { useTasaUsd, usdABs, formatearBs } from '../../lib/moneda'
+import { useCatalogoEspecialidades } from '../../lib/especialidades'
+import type { TarifaConsulta } from '../../lib/types'
+import { TIPO_CONSULTA_LABEL } from '../../lib/types'
 
-type Tab = 'personal' | 'examenes' | 'reporteria' | 'auditoria' | 'config' | 'umbrales' | 'integracion' | 'tasas' | 'backups' | 'comercial'
+type Tab = 'personal' | 'examenes' | 'reporteria' | 'auditoria' | 'config' | 'umbrales' | 'integracion' | 'tasas' | 'backups' | 'comercial' | 'tarifas'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'personal', label: 'Personal' },
   { id: 'examenes', label: 'Exámenes' },
   { id: 'comercial', label: 'Comercial' },
+  { id: 'tarifas', label: 'Tarifas' },
   { id: 'umbrales', label: 'Umbrales' },
   { id: 'integracion', label: 'Integración' },
   { id: 'tasas', label: 'Tasas de cambio' },
@@ -53,6 +57,7 @@ export default function AdminPage() {
       {tab === 'personal' && <PersonalTab />}
       {tab === 'examenes' && <ExamenesTab />}
       {tab === 'comercial' && <ComercialTab />}
+      {tab === 'tarifas' && <TarifasTab />}
       {tab === 'umbrales' && <UmbralesTab />}
       {tab === 'integracion' && <IntegracionTab />}
       {tab === 'tasas' && <TasasTab />}
@@ -650,6 +655,212 @@ function ExamenesTab() {
 
       {reactivosDe && <ReactivosExamenModal examen={reactivosDe} onClose={() => setReactivosDe(null)} />}
       {editarDe && <EditarExamenModal examen={editarDe} onClose={() => setEditarDe(null)} onSaved={() => { setEditarDe(null); setError(null) }} />}
+    </div>
+  )
+}
+
+// ---------- Tarifas de consulta ----------
+function TarifasTab() {
+  const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+  const [filtroTipo, setFiltroTipo] = useState<string>('')
+  const [especForm, setEspecForm] = useState('')
+  const tasaUsd = useTasaUsd()
+
+  const TIPOS = [
+    { value: '', label: 'Todos' },
+    { value: 'consulta_general', label: 'Consulta General' },
+    { value: 'especialista', label: 'Especialista' },
+    { value: 'domicilio', label: 'Domicilio' },
+    { value: 'telemedicina', label: 'Telemedicina' },
+    { value: 'control', label: 'Control' },
+  ]
+
+  const { data: tarifas = [], isLoading } = useQuery<TarifaConsulta[]>({
+    queryKey: ['tarifas', filtroTipo],
+    queryFn: async () => {
+      const params: Record<string, string> = {}
+      if (filtroTipo) params.tipo = filtroTipo
+      return (await api.get('/tarifas', { params })).data
+    },
+  })
+
+  const catalogoEspecialidades = useCatalogoEspecialidades()
+  const especialidades = catalogoEspecialidades.data?.especialidades ?? []
+
+  const { data: medicos = [] } = useQuery<{ id: string; nombre_completo: string; especialidad: string | null; especialidades: string[] }[]>({
+    queryKey: ['consultas', 'medicos'],
+    queryFn: async () => (await api.get('/consultas/medicos')).data,
+  })
+
+  const add = useMutation({
+    mutationFn: (p: unknown) => api.post('/tarifas', p),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tarifas'] }),
+    onError: (e) => setError(getApiError(e)),
+  })
+  const update = useMutation({
+    mutationFn: ({ id, p }: { id: string; p: unknown }) => api.put(`/tarifas/${id}`, p),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tarifas'] }),
+    onError: (e) => setError(getApiError(e)),
+  })
+  const toggleActivo = useMutation({
+    mutationFn: (t: TarifaConsulta) => api.put(`/tarifas/${t.id}`, { activo: !t.activo }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tarifas'] }),
+    onError: (e) => setError(getApiError(e)),
+  })
+
+  function handleAdd(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    add.mutate({
+      nombre: fd.get('nombre'),
+      tipo: fd.get('tipo'),
+      especialidad: fd.get('especialidad') || null,
+      medico_id: fd.get('medico_id') || null,
+      precio_usd: Number(fd.get('precio_usd') || 0),
+      impuesto: fd.get('impuesto') || 'gravado',
+      duracion_min: fd.get('duracion_min') ? Number(fd.get('duracion_min')) : null,
+    })
+    e.currentTarget.reset()
+    setEspecForm('')
+  }
+
+  // Médicos que manejan la especialidad seleccionada en el formulario. Sin
+  // especialidad elegida se muestran todos los médicos activos.
+  const medicosFiltradosPorEspecialidad = (m: { especialidades: string[] }) =>
+    !especForm || (m.especialidades ?? []).includes(especForm)
+
+  return (
+    <div className="space-y-4">
+      <form onSubmit={handleAdd} className="rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="grid gap-3 sm:grid-cols-4">
+          <Field label="Nombre *"><input name="nombre" required className={inputCls} placeholder="Consulta General" /></Field>
+          <Field label="Tipo *">
+            <select name="tipo" className={inputCls}>
+              {TIPOS.filter(t => t.value).map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Precio (USD) *"><input name="precio_usd" type="number" min={0} step="0.01" defaultValue={0} className={inputCls} /></Field>
+          <Field label="Impuesto">
+            <select name="impuesto" defaultValue="gravado" className={inputCls}>
+              <option value="gravado">Gravado (16% IVA)</option>
+              <option value="exento">Exento de IVA</option>
+              <option value="no_sujeto">No sujeto</option>
+            </select>
+          </Field>
+          <Field label="Especialidad (opcional)">
+            <select
+              name="especialidad"
+              value={especForm}
+              onChange={(e) => setEspecForm(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">— Cualquiera —</option>
+              {especialidades.map((esp) => (
+                <option key={esp.id} value={esp.id}>{esp.nombre}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label={especForm ? 'Médico (solo la especialidad)' : 'Médico (opcional)'}>
+            <select name="medico_id" defaultValue="" className={inputCls}>
+              <option value="">— Default (cualquier médico) —</option>
+              {medicos.filter(medicosFiltradosPorEspecialidad).map((m) => (
+                <option key={m.id} value={m.id}>{m.nombre_completo}{m.especialidad ? ` · ${m.especialidad}` : ''}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Duración (minutos)"><input name="duracion_min" type="number" min={0} placeholder="30" className={inputCls} /></Field>
+        </div>
+        <div className="mt-4">
+          <button type="submit" disabled={add.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Agregar tarifa</button>
+        </div>
+      </form>
+
+      <Errtag>{error}</Errtag>
+
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium text-slate-600">Filtrar por tipo:</span>
+        {TIPOS.map(t => (
+          <button key={t.value} onClick={() => setFiltroTipo(t.value)} className={`rounded-lg px-3 py-1 text-xs font-medium transition ${filtroTipo === t.value ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{t.label}</button>
+        ))}
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        {isLoading ? <p className="p-6 text-sm text-slate-500">Cargando…</p> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                <tr><th className="px-4 py-3">Nombre</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Especialidad</th><th className="px-4 py-3">Médico</th><th className="px-4 py-3">Precio</th><th className="px-4 py-3">Impuesto</th><th className="px-4 py-3">Duración</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3"></th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {tarifas.map((t) => (
+                  <tr key={t.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-slate-800">{t.nombre}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                        {TIPO_CONSULTA_LABEL[t.tipo] ?? t.tipo}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={t.especialidad ?? ''}
+                        onChange={(e) => update.mutate({ id: t.id, p: { especialidad: e.target.value || null } })}
+                        className="w-36 rounded border border-slate-300 px-2 py-1 text-xs"
+                        title="Especialidad de la consulta (filtra los médicos)"
+                      >
+                        <option value="">— Cualquiera —</option>
+                        {especialidades.map((esp) => (
+                          <option key={esp.id} value={esp.id}>{esp.nombre}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      <select
+                        value={t.medico_id ?? ''}
+                        onChange={(e) => update.mutate({ id: t.id, p: { medico_id: e.target.value || null } })}
+                        className="w-44 rounded border border-slate-300 px-2 py-1 text-xs"
+                        title="Médico asociado (vacío = tarifa default)"
+                      >
+                        <option value="">— Default —</option>
+                        {medicos
+                          .filter((m) => !t.especialidad || (m.especialidades ?? []).includes(t.especialidad))
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>{m.nombre_completo}</option>
+                          ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-0.5">
+                        <input type="number" defaultValue={t.precio_usd} onBlur={(e) => update.mutate({ id: t.id, p: { precio_usd: Number(e.target.value) } })} className="w-24 rounded border border-slate-300 px-2 py-1" />
+                        <span className="text-xs text-slate-400">{formatearBs(usdABs(t.precio_usd, tasaUsd))}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <select value={t.impuesto} onChange={(e) => update.mutate({ id: t.id, p: { impuesto: e.target.value } })} className="rounded border border-slate-300 px-2 py-1 text-xs">
+                        <option value="gravado">Gravado</option>
+                        <option value="exento">Exento</option>
+                        <option value="no_sujeto">No sujeto</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{t.duracion_min ? `${t.duracion_min} min` : '—'}</td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => toggleActivo.mutate(t)} className={`rounded-full px-2 py-0.5 text-xs font-medium ${t.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {t.activo ? 'Activa' : 'Inactiva'}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => toggleActivo.mutate(t)} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                        {t.activo ? 'Desactivar' : 'Activar'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!tarifas.length && <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-400">No hay tarifas configuradas</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

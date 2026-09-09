@@ -21,6 +21,16 @@ export const cobroLaboratorioSchema = z.object({
   ...opcionesFiscales,
 });
 
+export const cobroConsultaSchema = z.object({
+  consulta_id: z.string().uuid('Consulta inválida'),
+  metodo: z.string().max(30).optional(),
+  moneda: z.enum(['BS', 'USD']).default('USD'),
+  descuento: z.coerce.number().min(0).optional(),
+  descuento_motivo: z.string().max(300).optional(),
+  usar_prepago: z.boolean().optional(),
+  ...opcionesFiscales,
+});
+
 export const pagosQuery = z.object({
   desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
   hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),

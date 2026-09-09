@@ -21,3 +21,28 @@ export interface Paciente {
   historial?: { total_consultas: number }
   clinica_id?: string | null
 }
+
+export interface TarifaConsulta {
+  id: string
+  clinica_id: string | null
+  nombre: string
+  tipo: 'consulta_general' | 'especialista' | 'domicilio' | 'telemedicina' | 'control'
+  especialidad: string | null
+  especialidad_nombre?: string | null
+  medico_id: string | null
+  precio_usd: number
+  impuesto: 'gravado' | 'exento' | 'no_sujeto'
+  duracion_min: number | null
+  activo: boolean
+  created_at: string
+  updated_at: string
+  medico?: { nombre_completo: string } | null
+}
+
+export const TIPO_CONSULTA_LABEL: Record<string, string> = {
+  consulta_general: 'Consulta General',
+  especialista: 'Especialista',
+  domicilio: 'Domicilio',
+  telemedicina: 'Telemedicina',
+  control: 'Control',
+}

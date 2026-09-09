@@ -11,4 +11,10 @@ export const facturasQuery = z.object({
 
 export const anularFacturaSchema = z.object({
   motivo: z.string().min(5, 'Indica el motivo de anulación (mínimo 5 caracteres)').max(500),
+  // Destino de la anulación desde la caja:
+  //  - 'pendiente': la factura se anula y el cobro vuelve a cobros pendientes
+  //    (la consulta/solicitud retorna a estado pendiente para re-cobrarla).
+  //  - 'anulada': la factura se anula totalmente; el pago deja de contar y la
+  //    consulta/solicitud queda anulada (no se re-cobra).
+  destino: z.enum(['pendiente', 'anulada']).default('anulada'),
 });

@@ -141,8 +141,24 @@ export async function persistirFactura(d: DatosFactura): Promise<Row> {
   return data;
 }
 
-/** Anula una factura emitida (transición emitida -> anulada). */
-export async function anularFactura(id: string, motivo: string, anuladaPor: string): Promise<Row> {
+/**
+ * Anula una factura emitida (transición emitida -> anulada). Además de marcar
+ * el documento, revierte el estado del cobro asociado para que deje de contar
+ * en el reporte de pagos:
+ *  - El pago pasa a estado `anulado` (se excluye del total del reporte).
+ *  - Según `destino`:
+ *      'pendiente' → la consulta/solicitud vuelve a cobros pendientes
+ *                    (estado_pago pendiente / cobrado=false) para re-cobrarla.
+ *      'anulada'   → la consulta/solicitud queda anulada definitivamente
+ *                    (estado_pago anulada / solicitud anulada), sin re-cobro.
+ *  - Si el cobro usó prepago, restaura el fondo descontado.
+ */
+export async function anularFactura(
+  id: string,
+  motivo: string,
+  anuladaPor: string,
+  destino: 'pendiente' | 'anulada' = 'anulada',
+): Promise<Row> {
   const { data, error } = await getSupabase()
     .from('facturas')
     .update({
@@ -161,5 +177,59 @@ export async function anularFactura(id: string, motivo: string, anuladaPor: stri
     (conflict as { code?: string }).code = 'CONFLICT';
     throw conflict;
   }
-  return data;
+
+  const factura = data;
+  const pagoId = factura.pago_id as string | null;
+
+  // Pago asociado: deja de contar como ingreso en el reporte.
+  let prepagoUsadoUsd = 0;
+  let pacienteId: string | null = null;
+  if (pagoId) {
+    const { data: pago } = await getSupabase()
+      .from('pagos')
+      .select('id, estado, prepago_usado_usd, paciente_id')
+      .eq('id', pagoId)
+      .single();
+    if (pago) {
+      prepagoUsadoUsd = Number(pago.prepago_usado_usd ?? 0) || 0;
+      pacienteId = (pago.paciente_id as string | null) ?? null;
+      await getSupabase().from('pagos').update({ estado: 'anulado' }).eq('id', pago.id);
+    }
+  }
+
+  // Destino: la consulta/solicitud vuelve a pendiente o queda anulada.
+  if (factura.consulta_id) {
+    await getSupabase()
+      .from('consultas')
+      .update({ estado_pago: destino === 'pendiente' ? 'pendiente' : 'anulada' })
+      .eq('id', factura.consulta_id);
+  }
+  if (factura.solicitud_id) {
+    const set = destino === 'pendiente'
+      ? { cobrado: false, monto_pagado: 0, descuento: 0, descuento_motivo: null, descuento_autorizado_por: null }
+      : { cobrado: false, estado: 'anulada' };
+    await getSupabase().from('solicitudes').update(set).eq('id', factura.solicitud_id);
+  }
+
+  // Restaura el fondo de prepago usado por el cobro anulado.
+  if (prepagoUsadoUsd > 0 && pacienteId) {
+    const { data: tarjeta } = await getSupabase()
+      .from('tarjetas_prepago')
+      .select('id')
+      .eq('paciente_id', pacienteId)
+      .maybeSingle();
+    if (tarjeta) {
+      const { data: actual } = await getSupabase()
+        .from('tarjetas_prepago')
+        .select('saldo_usd')
+        .eq('id', tarjeta.id)
+        .single();
+      await getSupabase()
+        .from('tarjetas_prepago')
+        .update({ saldo_usd: redondear(Number(actual?.saldo_usd ?? 0) + prepagoUsadoUsd) })
+        .eq('id', tarjeta.id);
+    }
+  }
+
+  return factura;
 }

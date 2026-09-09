@@ -1,11 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, getApiError } from '../../lib/api'
 import { descargarFacturaPdf } from '../../lib/facturaPdf'
 import PrecioDual from '../../components/PrecioDual'
 import { useTasaUsd, usdABs, bsAUsd, formatearBs } from '../../lib/moneda'
 import { useConfigStore } from '../../lib/configStore'
 import type { FacturaResp } from '../../lib/facturaPdf'
+import { TIPO_CONSULTA_LABEL } from '../../lib/types'
 
 interface Solicitud {
   id: string
@@ -59,6 +61,19 @@ interface ReporteSaldos {
   saldos: SaldoCxc[]
 }
 
+interface ConsultaPendiente {
+  id: string
+  paciente_id: string
+  medico_id: string | null
+  fecha_hora: string
+  motivo: string | null
+  monto_base_usd: number
+  estado_pago: string
+  tipo_consulta?: string | null
+  paciente?: { id: string; cedula: string; nombre_completo: string } | null
+  medico?: { id: string; nombre_completo: string; especialidad?: string | null } | null
+}
+
 // Opciones fiscales compartidas por el cobro y el abono desde caja.
 export interface OpcionesFiscales {
   paciente_id?: string
@@ -81,6 +96,8 @@ export default function PagosPage() {
   const [error, setError] = useState<string | null>(null)
   const [desde, setDesde] = useState(new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10))
   const [hasta, setHasta] = useState(new Date().toISOString().slice(0, 10))
+  const [searchParams] = useSearchParams()
+  const consultaFocus = searchParams.get('consulta')
 
   const { data: pendientes = [], isLoading } = useQuery<Solicitud[]>({
     queryKey: ['solicitudes', 'cobrar'],
@@ -88,6 +105,11 @@ export default function PagosPage() {
       const data = (await api.get('/solicitudes', { params: { cobrado: 'false' } })).data as Solicitud[]
       return data.filter((s) => (s.monto_pagado ?? 0) === 0)
     },
+  })
+
+  const { data: consultasPendientes = [] } = useQuery<ConsultaPendiente[]>({
+    queryKey: ['consultas', 'cobrar'],
+    queryFn: async () => (await api.get('/consultas', { params: { estado_pago: 'pendiente' } })).data,
   })
 
   const { data: reporte } = useQuery<ReportePagos>({
@@ -144,12 +166,34 @@ export default function PagosPage() {
     onError: (e) => setError(getApiError(e)),
   })
 
+  const cobrarConsulta = useMutation({
+    mutationFn: (payload: {
+      consulta_id: string
+      metodo: string
+      moneda: string
+      descuento?: number
+      descuento_motivo?: string
+      usar_prepago?: boolean
+    } & OpcionesFiscales) => api.post('/pagos/consulta', payload),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
+      queryClient.invalidateQueries({ queryKey: ['pagos'] })
+      setError(null)
+      const data = res.data as { pago: Pago; factura?: { id: string; numero_control: string } }
+      setUltimoPago(data.pago)
+      setUltimaFactura(data.factura ?? null)
+    },
+    onError: (e) => setError(getApiError(e)),
+  })
+
   const anular = useMutation({
-    mutationFn: ({ factura_id, motivo }: { factura_id: string; motivo: string }) =>
-      api.post(`/facturas/${factura_id}/anular`, { motivo }),
+    mutationFn: ({ factura_id, motivo, destino }: { factura_id: string; motivo: string; destino: 'pendiente' | 'anulada' }) =>
+      api.post(`/facturas/${factura_id}/anular`, { motivo, destino }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pagos'] })
       queryClient.invalidateQueries({ queryKey: ['facturas'] })
+      queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+      queryClient.invalidateQueries({ queryKey: ['consultas'] })
       setAnularPago(null)
       setError(null)
     },
@@ -159,6 +203,17 @@ export default function PagosPage() {
   const [ultimoPago, setUltimoPago] = useState<Pago | null>(null)
   const [ultimaFactura, setUltimaFactura] = useState<{ id: string; numero_control: string } | null>(null)
   const [anularPago, setAnularPago] = useState<Pago | null>(null)
+
+  // Si venimos de la Agenda con ?consulta=<id>, destaca y hace scroll al card
+  // de cobro pendiente correspondiente una vez cargada la lista.
+  useEffect(() => {
+    if (!consultaFocus) return
+    if (!consultasPendientes.some((c) => c.id === consultaFocus)) return
+    const el = document.getElementById(`cobro-consulta-${consultaFocus}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [consultaFocus, consultasPendientes])
+
+  const consultaFoco = consultaFocus ? consultasPendientes.find((c) => c.id === consultaFocus) ?? null : null
 
   return (
     <div className="space-y-6">
@@ -197,18 +252,54 @@ export default function PagosPage() {
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           {isLoading ? (
             <p className="p-6 text-sm text-slate-500">Cargando…</p>
-          ) : pendientes.length === 0 ? (
-            <p className="p-6 text-sm text-slate-500">No hay solicitudes pendientes de cobro.</p>
+          ) : pendientes.length === 0 && consultasPendientes.length === 0 ? (
+            <p className="p-6 text-sm text-slate-500">No hay cobros pendientes.</p>
           ) : (
-            <div className="grid divide-y divide-slate-100 sm:grid-cols-2 lg:grid-cols-3 sm:divide-y-0 sm:gap-4 sm:p-4">
-              {pendientes.map((s) => (
-                <CobroCard
-                  key={s.id}
-                  solicitud={s}
-                  loading={cobrar.isPending}
-                  onCobrar={(datos) => cobrar.mutate({ solicitud_id: s.id, ...datos })}
-                />
-              ))}
+            <div className="divide-y divide-slate-100">
+              {pendientes.length > 0 && (
+                <>
+                  <div className="bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Laboratorio ({pendientes.length})
+                  </div>
+                  <div className="grid divide-y divide-slate-100 sm:grid-cols-2 lg:grid-cols-3 sm:divide-y-0 sm:gap-4 sm:p-4">
+                    {pendientes.map((s) => (
+                      <CobroCard
+                        key={s.id}
+                        solicitud={s}
+                        loading={cobrar.isPending}
+                        onCobrar={(datos) => cobrar.mutate({ solicitud_id: s.id, ...datos })}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+              {consultasPendientes.length > 0 && (
+                <>
+                  <div className="bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Consultas ({consultasPendientes.length})
+                  </div>
+                  {consultaFoco && (
+                    <div className="mx-4 mt-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                      Cobro pendiente de la Agenda — completa el pago desde Caja para facturar la consulta.
+                    </div>
+                  )}
+                  <div className="grid divide-y divide-slate-100 sm:grid-cols-2 lg:grid-cols-3 sm:divide-y-0 sm:gap-4 sm:p-4">
+                    {consultasPendientes.map((c) => (
+                      <div
+                        key={c.id}
+                        id={`cobro-consulta-${c.id}`}
+                        className={`rounded-xl ${c.id === consultaFocus ? 'ring-2 ring-emerald-400 shadow-md' : ''}`}
+                      >
+                        <CobroConsultaCard
+                          consulta={c}
+                          loading={cobrarConsulta.isPending}
+                          onCobrar={(datos) => cobrarConsulta.mutate({ consulta_id: c.id, ...datos })}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -245,7 +336,7 @@ export default function PagosPage() {
           <AnularModal
             cargando={anular.isPending}
             onClose={() => setAnularPago(null)}
-            onConfirm={(motivo) => anularPago.factura_id && anular.mutate({ factura_id: anularPago.factura_id, motivo })}
+            onConfirm={(motivo, destino) => anularPago.factura_id && anular.mutate({ factura_id: anularPago.factura_id, motivo, destino })}
           />
         )}
       </section>
@@ -449,6 +540,159 @@ function CobroCard(props: {
         className="mt-2 shrink-0 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
       >
         Cobrar
+      </button>
+    </div>
+  )
+}
+
+// ---------- Cobro de consulta médica ----------
+function CobroConsultaCard(props: {
+  consulta: ConsultaPendiente
+  loading: boolean
+  onCobrar: (d: { metodo: string; moneda: string; descuento?: number; descuento_motivo?: string; usar_prepago?: boolean } & OpcionesFiscales) => void
+}) {
+  const { consulta, loading, onCobrar } = props
+  const [metodo, setMetodo] = useState('efectivo')
+  const [moneda, setMoneda] = useState('USD')
+  const [descuento, setDescuento] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [usarPrepago, setUsarPrepago] = useState(false)
+  const [igtfAplica, setIgtfAplica] = useState(true)
+  const [retIva, setRetIva] = useState(false)
+  const [retIslr, setRetIslr] = useState(false)
+  const tasaUsd = useTasaUsd()
+  const ivaConfig = useConfigStore((s) => s.iva)
+  const igtfConfig = useConfigStore((s) => s.igtf)
+  const retIvaPct = useConfigStore((s) => s.retencion_iva_pct)
+  const retIslrPct = useConfigStore((s) => s.retencion_islr_pct)
+
+  const pacienteId = consulta.paciente?.id
+  const { data: prepago } = useQuery<{ tarjeta: { id: string; saldo_usd: number } | null }>({
+    queryKey: ['pagos', 'prepago', pacienteId],
+    queryFn: async () => (await api.get('/pagos/prepago', { params: { paciente_id: pacienteId } })).data,
+    enabled: !!pacienteId,
+  })
+  const saldoPrepago = Number(prepago?.tarjeta?.saldo_usd ?? 0)
+
+  const total = Number(consulta.monto_base_usd)
+  const desc = Number(descuento || 0)
+  const neto = Math.max(0, total - desc)
+  const ivaUsd = Number((neto * ivaConfig).toFixed(2))
+  const montoUsd = Number((neto + ivaUsd).toFixed(2))
+  const enBs = moneda === 'BS'
+  const sinTasa = enBs && tasaUsd == null
+  const montoMostrar = enBs ? usdABs(montoUsd, tasaUsd) : montoUsd
+  const ivaMostrar = enBs ? usdABs(ivaUsd, tasaUsd) : ivaUsd
+  const igtfUsd = enBs || !(igtfConfig > 0) || !igtfAplica ? 0 : Number((montoUsd * igtfConfig).toFixed(2))
+  const retIvaUsd = retIva && ivaUsd > 0 ? Number((ivaUsd * retIvaPct).toFixed(2)) : 0
+  const retIslrUsd = retIslr && neto > 0 ? Number((neto * retIslrPct).toFixed(2)) : 0
+  const montoFinal = Math.max(0, Number((montoUsd + igtfUsd - retIvaUsd - retIslrUsd).toFixed(2)))
+
+  return (
+    <div className="flex flex-col p-4 sm:rounded-xl sm:border sm:border-slate-200 sm:gap-2">
+      <div className="min-w-0">
+        <p className="truncate font-medium text-slate-800">{consulta.paciente?.nombre_completo ?? 'Paciente'}</p>
+        <p className="text-xs text-slate-400">{consulta.paciente?.cedula ?? ''} · {new Date(consulta.fecha_hora).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })} · {new Date(consulta.fecha_hora).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}</p>
+        {consulta.medico?.nombre_completo && (
+          <p className="mt-0.5 text-xs text-slate-500">
+            {consulta.tipo_consulta ? TIPO_CONSULTA_LABEL[consulta.tipo_consulta as keyof typeof TIPO_CONSULTA_LABEL] ?? consulta.tipo_consulta : 'Consulta'} · Dr(a). {consulta.medico.nombre_completo}
+            {consulta.medico.especialidad ? ` · ${consulta.medico.especialidad}` : ''}
+          </p>
+        )}
+      </div>
+      <div className="mt-1 text-sm text-slate-600">
+        Consulta — <PrecioDual usd={total} tasaUsd={tasaUsd} />
+        {desc > 0 && <span className="text-emerald-600"> · desc. ${desc.toFixed(2)}</span>}
+      </div>
+      {consulta.motivo && <p className="text-xs text-slate-500">{consulta.motivo}</p>}
+
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <Field label="Método">
+          <select value={metodo} onChange={(e) => setMetodo(e.target.value)} className={inputCls}>
+            {METODOS.map((m) => <option key={m} value={m}>{METODO_LABEL[m]}</option>)}
+          </select>
+        </Field>
+        <Field label="Moneda">
+          <select value={moneda} onChange={(e) => setMoneda(e.target.value)} className={inputCls}>
+            <option value="USD">Dólares (USD)</option>
+            <option value="BS">Bolívares (Bs.)</option>
+          </select>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <Field label="Descuento (USD)">
+          <input type="number" min="0" max={total} value={descuento} onChange={(e) => setDescuento(e.target.value)} className={inputCls} placeholder="0.00" />
+        </Field>
+        <Field label="Motivo">
+          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} className={inputCls} placeholder="Motivo / autorización" />
+        </Field>
+      </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-500">IVA {Math.round(ivaConfig * 100)}%: {enBs ? formatearBs(ivaMostrar) : `$${ivaUsd.toFixed(2)}`}</span>
+        <span className="font-bold text-slate-800">
+          Pagar: {sinTasa ? '—' : enBs ? `${formatearBs(montoMostrar)} (≈ $${montoFinal.toFixed(2)})` : `$${montoFinal.toFixed(2)}`}
+        </span>
+      </div>
+
+      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+        <span className="flex items-center gap-2">
+          <input type="checkbox" checked={!enBs && igtfConfig > 0 && igtfAplica} disabled={enBs || igtfConfig <= 0} onChange={(e) => setIgtfAplica(e.target.checked)} className="h-4 w-4 accent-purple-600" />
+          Cobrar IGTF ({Math.round(igtfConfig * 100)}%){enBs && ' — no aplica en Bs.'}
+        </span>
+        <span className={igtfUsd > 0 ? 'font-medium text-purple-700' : 'text-slate-400'}>{igtfUsd > 0 ? `+ $${igtfUsd.toFixed(2)}` : '—'}</span>
+      </label>
+      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+        <span className="flex items-center gap-2">
+          <input type="checkbox" checked={retIva} onChange={(e) => setRetIva(e.target.checked)} className="h-4 w-4 accent-amber-600" />
+          Retención de IVA ({Math.round(retIvaPct * 100)}%)
+        </span>
+        <span className={retIvaUsd > 0 ? 'font-medium text-amber-700' : 'text-slate-400'}>{retIvaUsd > 0 ? `− $${retIvaUsd.toFixed(2)}` : '—'}</span>
+      </label>
+      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+        <span className="flex items-center gap-2">
+          <input type="checkbox" checked={retIslr} onChange={(e) => setRetIslr(e.target.checked)} className="h-4 w-4 accent-amber-600" />
+          Retención de ISLR ({Math.round(retIslrPct * 100)}%)
+        </span>
+        <span className={retIslrUsd > 0 ? 'font-medium text-amber-700' : 'text-slate-400'}>{retIslrUsd > 0 ? `− $${retIslrUsd.toFixed(2)}` : '—'}</span>
+      </label>
+
+      {sinTasa && (
+        <p className="text-xs text-red-600">Configura la tasa del día en Administración → Tasas para cobrar en Bs.</p>
+      )}
+
+      <label className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+        <span className="text-slate-700">
+          Usar fondo de prepago
+          <span className="block text-xs text-slate-400">
+            Saldo: {saldoPrepago > 0 ? `$${saldoPrepago.toFixed(2)}` : 'sin saldo'}
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={usarPrepago}
+          disabled={saldoPrepago <= 0}
+          onChange={(e) => setUsarPrepago(e.target.checked)}
+          className="h-4 w-4 accent-brand-600"
+        />
+      </label>
+
+      <button
+        onClick={() => onCobrar({
+          metodo,
+          moneda,
+          descuento: desc > 0 ? desc : undefined,
+          descuento_motivo: motivo || undefined,
+          usar_prepago: usarPrepago || undefined,
+          igtf_aplica: !enBs && igtfConfig > 0 ? igtfAplica : undefined,
+          retencion_iva_aplica: retIva || undefined,
+          retencion_islr_aplica: retIslr || undefined,
+        })}
+        disabled={loading || sinTasa}
+        className="mt-2 shrink-0 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+      >
+        Cobrar consulta
       </button>
     </div>
   )
@@ -1207,6 +1451,8 @@ function PagosTable({ pagos, onFactura, onAnular }: { pagos: Pago[]; onFactura: 
 function estadoCls(estado: string) {
   return estado === 'pagado' ? 'bg-emerald-100 text-emerald-700'
     : estado === 'pendiente' ? 'bg-amber-100 text-amber-700'
+    : estado === 'reembolsado' ? 'bg-blue-100 text-blue-700'
+    : estado === 'anulado' ? 'bg-red-100 text-red-700'
     : 'bg-slate-100 text-slate-500'
 }
 
@@ -1274,16 +1520,38 @@ function FacturaModal({ pagoId, factura, onClose }: { pagoId?: string; factura: 
   )
 }
 
-function AnularModal({ cargando, onClose, onConfirm }: { cargando: boolean; onClose: () => void; onConfirm: (motivo: string) => void }) {
+function AnularModal({ cargando, onClose, onConfirm }: { cargando: boolean; onClose: () => void; onConfirm: (motivo: string, destino: 'pendiente' | 'anulada') => void }) {
   const [motivo, setMotivo] = useState('')
+  const [destino, setDestino] = useState<'pendiente' | 'anulada'>('anulada')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-bold text-slate-800">Anular factura</h3>
         <p className="mt-1 text-sm text-slate-500">
-          El documento quedará con estatus <strong>anulada</strong>. El correlativo no se reutiliza.
+          El documento quedará con estatus <strong>anulada</strong>. El correlativo no se reutiliza y el pago dejará de contar en el reporte.
         </p>
+
+        <div className="mt-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">¿Qué ocurre con el cobro?</p>
+          <div className="mt-2 space-y-2">
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${destino === 'anulada' ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}>
+              <input type="radio" name="destino-anular" checked={destino === 'anulada'} onChange={() => setDestino('anulada')} className="mt-0.5 h-4 w-4 accent-red-600" />
+              <span>
+                <span className="block text-sm font-semibold text-slate-800">Anular totalmente</span>
+                <span className="block text-xs text-slate-500">La consulta/solicitud queda anulada y no volverá a cobrarse. Ideal para cobros duplicados o incorrectos.</span>
+              </span>
+            </label>
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${destino === 'pendiente' ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
+              <input type="radio" name="destino-anular" checked={destino === 'pendiente'} onChange={() => setDestino('pendiente')} className="mt-0.5 h-4 w-4 accent-amber-600" />
+              <span>
+                <span className="block text-sm font-semibold text-slate-800">Volver a cobros pendientes</span>
+                <span className="block text-xs text-slate-500">La consulta/solicitud reaparece en caja para poder cobrarla de nuevo con la corrección.</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
         <div className="mt-4">
           <Field label="Motivo de anulación *">
             <input
@@ -1297,7 +1565,7 @@ function AnularModal({ cargando, onClose, onConfirm }: { cargando: boolean; onCl
         <div className="mt-4 flex gap-2">
           <button
             disabled={cargando || motivo.trim().length < 5}
-            onClick={() => onConfirm(motivo)}
+            onClick={() => onConfirm(motivo, destino)}
             className="flex-1 rounded-lg bg-red-600 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
           >
             {cargando ? 'Anulando…' : 'Anular'}

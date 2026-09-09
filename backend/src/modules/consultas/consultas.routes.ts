@@ -16,7 +16,7 @@ const router = Router();
 router.use(authRequired);
 
 const CONSULTA_COLS =
-  'id, paciente_id, medico_id, clinica_id, fecha_hora, motivo, diagnostico, notas, estado, created_at';
+  'id, paciente_id, medico_id, clinica_id, fecha_hora, motivo, diagnostico, notas, estado, tipo_consulta, tarifa_consulta_id, monto_base_usd, estado_pago, created_at';
 
 /**
  * Crea el turno de sala de espera vinculado a una consulta (retroalimentación
@@ -62,7 +62,7 @@ async function asegurarTurnoConsulta(consulta: { id: string; paciente_id: string
  */
 router.get('/', validate(consultasQuery, 'query'), async (req, res, next) => {
   try {
-    const { fecha, desde, hasta, medico_id, estado, limit } = req.query as unknown as z.infer<typeof consultasQuery>;
+    const { fecha, desde, hasta, medico_id, estado, estado_pago, limit } = req.query as unknown as z.infer<typeof consultasQuery>;
     const user = req.user!;
 
     let query = getSupabase().from('consultas').select(CONSULTA_COLS);
@@ -76,6 +76,7 @@ router.get('/', validate(consultasQuery, 'query'), async (req, res, next) => {
       query = query.gte('fecha_hora', `${desde}T00:00:00.000Z`).lte('fecha_hora', `${hasta}T23:59:59.999Z`);
     }
     if (estado) query = query.eq('estado', estado);
+    if (estado_pago) query = query.eq('estado_pago', estado_pago);
 
     query = query.order('fecha_hora', { ascending: true });
 
@@ -150,6 +151,37 @@ router.post(
         .maybeSingle();
       if (mErr) return next(mErr);
 
+      // Resolver tarifa para este médico + tipo de consulta.
+      const tipoConsulta = (body as any).tipo_consulta ?? 'consulta_general';
+      let tarifaId: string | null = null;
+      let montoBaseUsd = 0;
+
+      // 1. Tarifa específica del médico.
+      const { data: tarifaMedico } = await getSupabase()
+        .from('tarifas_consulta')
+        .select('id, precio_usd')
+        .eq('tipo', tipoConsulta)
+        .eq('medico_id', medico_id)
+        .eq('activo', true)
+        .maybeSingle();
+      if (tarifaMedico) {
+        tarifaId = tarifaMedico.id as string;
+        montoBaseUsd = Number(tarifaMedico.precio_usd);
+      } else {
+        // 2. Tarifa default del tipo (medico_id = null).
+        const { data: tarifaDefault } = await getSupabase()
+          .from('tarifas_consulta')
+          .select('id, precio_usd')
+          .eq('tipo', tipoConsulta)
+          .is('medico_id', null)
+          .eq('activo', true)
+          .maybeSingle();
+        if (tarifaDefault) {
+          tarifaId = tarifaDefault.id as string;
+          montoBaseUsd = Number(tarifaDefault.precio_usd);
+        }
+      }
+
       const { data: consulta, error } = await getSupabase()
         .from('consultas')
         .insert({
@@ -161,6 +193,10 @@ router.post(
           notas: body.notas,
           estado: 'programada',
           origen: 'staff',
+          tipo_consulta: tipoConsulta,
+          tarifa_consulta_id: tarifaId,
+          monto_base_usd: montoBaseUsd,
+          estado_pago: 'pendiente',
         })
         .select(CONSULTA_COLS)
         .single();
@@ -195,7 +231,7 @@ router.get('/medicos', async (_req, res, next) => {
   try {
     const { data, error } = await getSupabase()
       .from('profiles')
-      .select('id, nombre_completo, especialidad, categoria_medica')
+      .select('id, nombre_completo, especialidad, especialidades, categoria_medica')
       .eq('role', 'medico')
       .eq('activo', true)
       .order('nombre_completo', { ascending: true });

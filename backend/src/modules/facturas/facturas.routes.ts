@@ -79,15 +79,17 @@ router.get('/:id', async (req, res, next) => {
 /**
  * POST /api/facturas/:id/anular
  * Anula una factura emitida (motivo obligatorio). El correlativo no se reutiliza.
+ * `destino` decide si el cobro vuelve a cobros pendientes ('pendiente') o queda
+ * anulada totalmente ('anulada', por defecto).
  */
 router.post('/:id/anular', validate(anularFacturaSchema), async (req, res, next) => {
   try {
     const { id } = req.params as { id: string };
-    const { motivo } = req.body as z.infer<typeof anularFacturaSchema>;
+    const { motivo, destino } = req.body as z.infer<typeof anularFacturaSchema>;
 
     let factura;
     try {
-      factura = await anularFactura(id, motivo, req.user!.id);
+      factura = await anularFactura(id, motivo, req.user!.id, destino);
     } catch (e) {
       if ((e as { code?: string }).code === 'CONFLICT') {
         return next(badRequest((e as Error).message));

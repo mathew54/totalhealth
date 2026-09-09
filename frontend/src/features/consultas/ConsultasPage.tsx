@@ -28,6 +28,9 @@ interface Consulta {
   notas: string | null
   estado: string
   origen: string | null
+  tipo_consulta?: string | null
+  monto_base_usd?: number | null
+  estado_pago?: 'pendiente' | 'pagada' | 'parcial' | 'anulada' | null
   url_telemedicina?: string | null
   es_telemedicina?: boolean
   paciente?: { id: string; cedula: string; nombre_completo: string } | null
@@ -406,7 +409,39 @@ function VistaDia({ consultas, onAbrir }: { consultas: Consulta[]; onAbrir: (c: 
   )
 }
 
+// ---------- Cobro de consulta desde agenda → Caja ----------
+// Al pulsar «Cobrar» se navega al módulo de Caja, donde el pago pendiente se
+// muestra con todos sus detalles en la misma ventana de cobro de caja.
+function CobrarConsultaInline({ consulta, onCobrado }: { consulta: Consulta; onCobrado: () => void }) {
+  const navigate = useNavigate()
+
+  return (
+    <button
+      onClick={() => {
+        onCobrado()
+        navigate(`/pagos?consulta=${encodeURIComponent(consulta.id)}`)
+      }}
+      className="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+      title="Pasar a Caja para cobrar la consulta con todos sus detalles"
+    >
+      Cobrar ${Number(consulta.monto_base_usd).toFixed(2)}
+    </button>
+  )
+}
+
 function CitaRow({ c, onAbrir }: { c: Consulta; onAbrir: () => void }) {
+  const pagoBadge = c.estado_pago && c.estado_pago !== 'pagada' ? (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+      c.estado_pago === 'pendiente' ? 'bg-amber-100 text-amber-700' :
+      c.estado_pago === 'parcial' ? 'bg-blue-100 text-blue-700' :
+      'bg-red-100 text-red-600'
+    }`}>
+      {c.estado_pago === 'pendiente' ? 'Sin cobrar' : c.estado_pago === 'parcial' ? 'Abono' : 'Anulada'}
+    </span>
+  ) : c.estado_pago === 'pagada' ? (
+    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">Pagada</span>
+  ) : null
+
   return (
     <button
       onClick={onAbrir}
@@ -414,12 +449,16 @@ function CitaRow({ c, onAbrir }: { c: Consulta; onAbrir: () => void }) {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-brand-700">{horaDe(c.fecha_hora)}</span>
-        <TurnoBadge turno={c.turno ?? null} />
+        <div className="flex items-center gap-1">
+          {pagoBadge}
+          <TurnoBadge turno={c.turno ?? null} />
+        </div>
       </div>
       <p className="mt-1 truncate text-sm font-medium text-slate-800">{c.paciente?.nombre_completo ?? 'Paciente'}</p>
       <p className="truncate text-xs text-slate-400">
         {c.paciente?.cedula ?? ''}
         {c.motivo ? ` · ${c.motivo}` : ''}
+        {c.monto_base_usd ? ` · $${Number(c.monto_base_usd).toFixed(2)}` : ''}
       </p>
     </button>
   )
@@ -877,8 +916,8 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
                 {esMedicoAutor && base.estado !== 'cancelada' && (
                   <div className="mt-3 space-y-2">
                     {base.url_telemedicina ? (
-                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-                        <span className="text-sm font-medium text-emerald-700">Telemedicina activa</span>
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/40">
+                        <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Telemedicina activa</span>
                         <a
                           href={base.url_telemedicina}
                           target="_blank"
@@ -914,6 +953,10 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
                   </button>
                 )}
 
+                {puedeSala && base.estado_pago === 'pendiente' && base.monto_base_usd != null && Number(base.monto_base_usd) > 0 && (
+                  <CobrarConsultaInline consulta={base} onCobrado={() => queryClient.invalidateQueries({ queryKey: ['consultas'] })} />
+                )}
+
                 {puedeGestionar && (
                   <button
                     onClick={() => {
@@ -929,12 +972,12 @@ function DetalleModal({ consultaId, initial, onClose }: { consultaId: string; in
                 <div className="mt-4">
                   <h4 className="mb-1 text-sm font-semibold text-slate-700">Diagnóstico</h4>
                   {base.diagnostico ? (
-                    <p className="rounded-lg bg-green-50 p-3 text-sm text-slate-700">{base.diagnostico}</p>
+                    <p className="rounded-lg bg-green-50 p-3 text-sm text-slate-700 dark:bg-green-950/40 dark:text-slate-200">{base.diagnostico}</p>
                   ) : esMedicoAutor ? (
                     <form onSubmit={handleDiag} className="space-y-2">
                       <textarea name="diagnostico" required placeholder="Diagnóstico…" rows={2} className={inputCls} />
                       <textarea name="notas" placeholder="Notas (opcional)" rows={2} className={inputCls} />
-                      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+                      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
                       <button type="submit" disabled={setDiagnostico.isPending} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
                         {setDiagnostico.isPending ? 'Guardando…' : 'Registrar diagnóstico y cerrar'}
                       </button>

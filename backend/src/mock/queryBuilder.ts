@@ -3,6 +3,7 @@ import type { MockStore, Row } from './store.js'
 
 type Op =
   | { op: 'eq'; col: string; val: unknown }
+  | { op: 'is'; col: string; val: unknown }
   | { op: 'gte'; col: string; val: unknown }
   | { op: 'lte'; col: string; val: unknown }
   | { op: 'in'; col: string; val: unknown[] }
@@ -68,6 +69,10 @@ export class QueryBuilder {
     this.filters.push({ op: 'in', col, val })
     return this
   }
+  is(col: string, val: unknown) {
+    this.filters.push({ op: 'is', col, val })
+    return this
+  }
   not(col: string, op: string, val: unknown) {
     this.filters.push({ op: 'not', col, notOp: op, val } as never)
     return this
@@ -101,6 +106,8 @@ export class QueryBuilder {
       switch (f.op) {
         case 'eq':
           return v === f.val || (v == null && f.val == null)
+        case 'is':
+          return f.val === null ? v == null : v === f.val
         case 'gte':
           return v != null && compare(f.val, v) <= 0
         case 'lte':
